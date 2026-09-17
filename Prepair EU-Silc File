@@ -1,0 +1,97 @@
+*******************************************************************************************************************************************************************************************
+*** Title: Prepare EU-SILC analysis file (MA-II logic on EU-SILC)
+*** Replaces: "Create pre post policy file"
+*** Aim: Destring, weights, age, employment status (EUROMOD les==3 equivalent), activity status, SMD
+*** Note: No policy scenario exists on EU-SILC, therefore no append and no scenario variable
+*******************************************************************************************************************************************************************************************
+clear all
+set more off
+
+global data "D:\Data\AT_CROSS"
+
+use "$data/SILC_CrossSec_2018_2024_MAII.dta", clear
+
+********************************************************************************
+* Destring (decimal comma -> point); create empty variable if not available
+********************************************************************************
+
+local numvars "HY020 HY022 HX050 HX090 HX080 RB050 PB040 RX010 PX010 PL031 PL032 PL040 PL040A RX060"
+
+foreach var of local numvars {
+    capture confirm variable `var'
+    if _rc == 0 {
+        capture confirm string variable `var'
+        if _rc == 0 {
+            replace `var' = subinstr(`var', ",", ".", .)
+            destring `var', replace force
+        }
+    }
+    else {
+        gen `var' = .
+        di as text "`var' not found, created as missing"
+    }
+}
+
+********************************************************************************
+* Weight and age (EUROMOD dwt / dag equivalents)
+********************************************************************************
+
+gen double dwt = RB050
+replace dwt = PB040 if missing(dwt)
+label variable dwt "Personal cross-sectional weight (RB050, else PB040)"
+
+gen dag = RX010
+replace dag = PX010 if missing(dag)
+label variable dag "Age (RX010, else PX010)"
+
+********************************************************************************
+* Employed = current employee (equivalent of EUROMOD les == 3)
+* 2018-2020: PL031 = 1 (employee full-time) or 2 (employee part-time)
+* 2021-2024: PL032 = 1 (employed) and PL040A = 3 (employee, current main job)
+* PL040 (2015-2020) is NOT used here: it is also filled for persons who have ever
+* worked (PL015 = 1), i.e. it can refer to the last job of retired or unemployed persons
+********************************************************************************
+
+gen byte employed = 0
+replace employed = 1 if inrange(year, 2018, 2020) & inlist(PL031, 1, 2)
+replace employed = 1 if inrange(year, 2021, 2024) & PL032 == 1 & PL040A == 3
+label variable employed "Employed persons (current employee, les==3 equivalent)"
+
+********************************************************************************
+* Working = currently working in any status (employee or self-employed)
+* Used to define the non-working comparison group (AROP w/o IWP)
+********************************************************************************
+
+gen byte working = .
+replace working = inrange(PL031, 1, 4) if inrange(year, 2018, 2020) & !missing(PL031)
+replace working = (PL032 == 1) if inrange(year, 2021, 2024) & !missing(PL032)
+label variable working "Currently working (any status)"
+
+********************************************************************************
+* Diagnostic: comparison with project convention (PL040 / PL040A == 3)
+********************************************************************************
+
+gen emp_status_conv = .
+replace emp_status_conv = PL040 if inrange(year, 2015, 2020)
+replace emp_status_conv = PL040A if inrange(year, 2021, 2024)
+label variable emp_status_conv "Status in employment (PL040/PL040A), project convention"
+
+di _n "=== Current employee vs. PL040/PL040A == 3, age 18-64 ===" _n
+table year if inrange(dag, 18, 64) [pw=dwt], statistic(mean employed) nototals
+gen byte emp_conv3 = (emp_status_conv == 3)
+table year if inrange(dag, 18, 64) [pw=dwt], statistic(mean emp_conv3) nototals
+drop emp_conv3
+
+********************************************************************************
+* Severe material and social deprivation (RX060)
+* Check the RX060 label in each year's codebook (2018 codebook: "severely
+* materially deprived household"; 2024 codebook: "severely materially and
+* socially deprived household")
+********************************************************************************
+
+gen byte smd = RX060 if inlist(RX060, 0, 1)
+label variable smd "Severe (material and social) deprivation, RX060"
+
+tab year smd, missing
+
+save "$data/SILC_MAII_prepared.dta", replace

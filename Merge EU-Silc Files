@@ -1,0 +1,79 @@
+*******************************************************************************************************************************************************************************************
+*** Title: Merge EU-SILC cross-sectional UDB files for Austria 2018-2024 (MA-II logic on EU-SILC)
+*** Replaces: "Merge EUROMOD output files"
+*** Aim: Merge R, D, H, P files per year and append all years into one dataset
+*** Note: All variables imported as strings (as in MA-II) to avoid type conflicts when appending; destring happens in script 02
+*** Note: year = UDB survey year (income reference year = year - 1)
+*******************************************************************************************************************************************************************************************
+clear all
+set more off
+
+global input "D:\Data\AT_CROSS"
+global output "D:\Data\AT_CROSS"
+
+local years "2018 2019 2020 2021 2022 2023 2024"
+local first_year = 1
+
+foreach yr of local years {
+
+    di _n "=== Processing year `yr' ===" _n
+
+    * Short year (18, 19, ...)
+    local ys = substr("`yr'", 3, 2)
+
+    * H file (household data)
+    import delimited "$input/`yr'/UDB_cAT`ys'H.csv", delimiter(",") clear case(preserve) stringcols(_all)
+    rename HB030 idhh
+    tempfile household
+    save `household'
+
+    * D file (household register)
+    import delimited "$input/`yr'/UDB_cAT`ys'D.csv", delimiter(",") clear case(preserve) stringcols(_all)
+    rename DB030 idhh
+    tempfile hh_register
+    save `hh_register'
+
+    * R file (personal register, includes children)
+    import delimited "$input/`yr'/UDB_cAT`ys'R.csv", delimiter(",") clear case(preserve) stringcols(_all)
+    rename RB030 idperson
+    rename RX030 idhh
+    tempfile p_register
+    save `p_register'
+
+    * P file (personal data, persons 16+)
+    import delimited "$input/`yr'/UDB_cAT`ys'P.csv", delimiter(",") clear case(preserve) stringcols(_all)
+    rename PB030 idperson
+    rename PX030 idhh
+
+    * Merge personal files (keeps R-only persons such as children)
+    merge 1:1 idperson using `p_register'
+    drop _merge
+
+    * Merge household files
+    merge m:1 idhh using `household'
+    drop _merge
+
+    merge m:1 idhh using `hh_register'
+    drop _merge
+
+    gen year = `yr'
+
+    di "Year `yr' merged: " _N " observations"
+
+    if `first_year' == 1 {
+        tempfile alldata
+        save `alldata'
+        local first_year = 0
+    }
+    else {
+        append using `alldata'
+        save `alldata', replace
+    }
+}
+
+use `alldata', clear
+
+save "$output/SILC_CrossSec_2018_2024_MAII.dta", replace
+
+di "Complete! Total observations: " _N
+tab year

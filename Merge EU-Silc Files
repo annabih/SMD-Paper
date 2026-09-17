@@ -4,33 +4,33 @@
 *** Aim: Merge R, D, H, P files per year and append all available years into one dataset
 *** Note: All variables imported as strings (as in MA-II) to avoid type conflicts when appending; destring happens in script 02
 *** Note: year = UDB survey year (income reference year = year - 1)
-*** Note: Years without a folder / CSV files are skipped automatically (currently no 2018 folder)
+*** Note: Years 2019-2024; years without complete CSV files are skipped automatically
 *******************************************************************************************************************************************************************************************
 clear all
 set more off
 
-global root "/Users/anna/Desktop/USB/SMSD_Paper/AT_CROSS"
 
-local years "2018 2019 2020 2021 2022 2023 2024"
+local years "2019 2020 2021 2022 2023 2024"
 local first_year = 1
 local done ""
 local skipped ""
 
 foreach yr of local years {
 
-    * Short year (18, 19, ...)
+    * Short year (19, 20, ...)
     local ys = substr("`yr'", 3, 2)
 
     * Skip year if any of the four UDB files is missing
     local complete = 1
     foreach f in H D R P {
-        capture confirm file "$root/`yr'/UDB_cAT`ys'`f'.csv"
+        capture confirm file "Y:/Desktop/USB/SMSD_Paper/AT_CROSS/`yr'/UDB_cAT`ys'`f'.csv"
         if _rc != 0 {
             local complete = 0
+            di as error "   not found: Y:/Desktop/USB/SMSD_Paper/AT_CROSS/`yr'/UDB_cAT`ys'`f'.csv"
         }
     }
     if `complete' == 0 {
-        di as error "Year `yr': UDB csv files not complete in $root/`yr' - skipped"
+        di as error "Year `yr': UDB csv files not complete in Y:/Desktop/USB/SMSD_Paper/AT_CROSS/`yr' - skipped"
         local skipped "`skipped' `yr'"
         continue
     }
@@ -38,26 +38,26 @@ foreach yr of local years {
     di _n "=== Processing year `yr' ===" _n
 
     * H file (household data)
-    import delimited "$root/`yr'/UDB_cAT`ys'H.csv", delimiter(",") clear case(preserve) stringcols(_all)
+    import delimited "Y:/Desktop/USB/SMSD_Paper/AT_CROSS/`yr'/UDB_cAT`ys'H.csv", delimiter(",") clear case(preserve) stringcols(_all)
     rename HB030 idhh
     tempfile household
     save `household'
 
     * D file (household register)
-    import delimited "$root/`yr'/UDB_cAT`ys'D.csv", delimiter(",") clear case(preserve) stringcols(_all)
+    import delimited "Y:/Desktop/USB/SMSD_Paper/AT_CROSS/`yr'/UDB_cAT`ys'D.csv", delimiter(",") clear case(preserve) stringcols(_all)
     rename DB030 idhh
     tempfile hh_register
     save `hh_register'
 
     * R file (personal register, includes children)
-    import delimited "$root/`yr'/UDB_cAT`ys'R.csv", delimiter(",") clear case(preserve) stringcols(_all)
+    import delimited "Y:/Desktop/USB/SMSD_Paper/AT_CROSS/`yr'/UDB_cAT`ys'R.csv", delimiter(",") clear case(preserve) stringcols(_all)
     rename RB030 idperson
     rename RX030 idhh
     tempfile p_register
     save `p_register'
 
     * P file (personal data, persons 16+)
-    import delimited "$root/`yr'/UDB_cAT`ys'P.csv", delimiter(",") clear case(preserve) stringcols(_all)
+    import delimited "Y:/Desktop/USB/SMSD_Paper/AT_CROSS/`yr'/UDB_cAT`ys'P.csv", delimiter(",") clear case(preserve) stringcols(_all)
     rename PB030 idperson
     rename PX030 idhh
 
@@ -92,13 +92,13 @@ foreach yr of local years {
 }
 
 if `first_year' == 1 {
-    di as error "No year could be processed - check path $root"
+    di as error "No year could be processed - check path Y:/Desktop/USB/SMSD_Paper/AT_CROSS"
     exit 601
 }
 
 use `alldata', clear
 
-save "$root/SILC_CrossSec_MAII.dta", replace
+save "Y:/Desktop/USB/SMSD_Paper/SILC_CrossSec_All_Years.dta", replace
 
 di _n "Complete! Total observations: " _N
 di "Years merged: `done'"

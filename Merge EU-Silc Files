@@ -4,7 +4,7 @@
 *** Aim: Merge R, D, H, P files per year and append all available years into one dataset
 *** Note: All variables imported as strings (as in MA-II) to avoid type conflicts when appending; destring happens in script 02
 *** Note: year = UDB survey year (income reference year = year - 1)
-*** Note: Years 2019-2024; years without complete CSV files are skipped automatically
+*** Note: Years 2018-2024; years without complete CSV files are skipped automatically
 *******************************************************************************************************************************************************************************************
 clear all
 set more off

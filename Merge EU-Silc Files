@@ -10,7 +10,7 @@ clear all
 set more off
 
 
-local years "2019 2020 2021 2022 2023 2024"
+local years "2018 2019 2020 2021 2022 2023 2024"
 local first_year = 1
 local done ""
 local skipped ""

@@ -12,9 +12,8 @@
 clear all
 set more off
 
-global data "D:\Data\AT_CROSS"
 
-use "$data/SILC_MAII_prepared.dta", clear
+use "Y:/Desktop/USB/SMSD_Paper/SILC_All_Years_Prepared.dta", clear
 
 ********************************************************************************
 * Equivalised household income (monthly)
@@ -185,4 +184,4 @@ label variable smd_grp "SMD comparison group, post-transfer"
 
 tab year smd_grp, missing
 
-save "$data/SILC_MAII_adjusted.dta", replace
+save "Y:/Desktop/USB/SMSD_Paper/SILC_MAII_adjusted.dta", replace

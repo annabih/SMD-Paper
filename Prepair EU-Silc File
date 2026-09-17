@@ -3,13 +3,15 @@
 *** Replaces: "Create pre post policy file"
 *** Aim: Destring, weights, age, employment status (EUROMOD les==3 equivalent), activity status, SMD
 *** Note: No policy scenario exists on EU-SILC, therefore no append and no scenario variable
+*** Input: SILC_CrossSec_MAII.dta (from script 01)
+*** Output: SILC_MAII_prepared.dta
 *******************************************************************************************************************************************************************************************
 clear all
 set more off
 
-global data "Y:\Desktop\USB    \D:\Data\AT_CROSS"
+global root "/Users/anna/Desktop/USB/SMSD_Paper/AT_CROSS"
 
-use "$data/SILC_CrossSec_2018_2024_MAII.dta", clear
+use "$root/SILC_CrossSec_MAII.dta", clear
 
 ********************************************************************************
 * Destring (decimal comma -> point); create empty variable if not available
@@ -94,4 +96,4 @@ label variable smd "Severe (material and social) deprivation, RX060"
 
 tab year smd, missing
 
-save "$data/SILC_MAII_prepared.dta", replace
+save "$root/SILC_MAII_prepared.dta", replace

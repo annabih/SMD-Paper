@@ -136,18 +136,18 @@ table year if axi_post_rel == 1 [pw=dwt], statistic(mean pct_b1_axi_post_rel) st
 table year smd_grp if !missing(smd) [pw=dwt], statistic(mean smd) nototals nformat(%9.4f mean)
 table year smd_grp if !missing(smd), statistic(count smd) nototals
 
-*** Mean of annual shares 2019-2024 (same aggregation as in the Research Note)
+*** Mean of annual shares 2018-2024 (same aggregation as in the Research Note)
 preserve
-keep if !missing(smd_grp) & !missing(smd) & inrange(year, 2019, 2024)
+keep if !missing(smd_grp) & !missing(smd) & inrange(year, 2018, 2024)
 collapse (mean) smd [pw=dwt], by(year smd_grp)
 collapse (mean) smd, by(smd_grp)
 replace smd = smd * 100
 list, noobs
 restore
 
-*** Pooled 2019-2024 survey estimate with pp difference and relative change
+*** Pooled 2018-2024 survey estimate with pp difference and relative change
 capture drop smd_sample
-gen byte smd_sample = (!missing(smd_grp) & !missing(smd) & inrange(year, 2019, 2024))
+gen byte smd_sample = (!missing(smd_grp) & !missing(smd) & inrange(year, 2018, 2024))
 
 svyset [pw=dwt], vce(linearized)
 

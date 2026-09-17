@@ -3,8 +3,8 @@
 *** Replaces: "Create pre post policy file"
 *** Aim: Destring, weights, age, employment status (EUROMOD les==3 equivalent), activity status, SMD
 *** Note: No policy scenario exists on EU-SILC, therefore no append and no scenario variable
-*** Input: SILC_CrossSec_MAII.dta (from script 01)
-*** Output: SILC_MAII_prepared.dta
+*** Input: SILC_CrossSec_All_Years.dta (from script 01)
+*** Output: SILC_All_Years_Prepared.dta
 *******************************************************************************************************************************************************************************************
 clear all
 set more off
@@ -47,14 +47,14 @@ label variable dag "Age (RX010, else PX010)"
 
 ********************************************************************************
 * Employed = current employee (equivalent of EUROMOD les == 3)
-* 2019-2020: PL031 = 1 (employee full-time) or 2 (employee part-time)
+* 2018-2020: PL031 = 1 (employee full-time) or 2 (employee part-time)
 * 2021-2024: PL032 = 1 (employed) and PL040A = 3 (employee, current main job)
 * PL040 (2015-2020) is NOT used here: it is also filled for persons who have ever
 * worked (PL015 = 1), i.e. it can refer to the last job of retired or unemployed persons
 ********************************************************************************
 
 gen byte employed = 0
-replace employed = 1 if inrange(year, 2019, 2020) & inlist(PL031, 1, 2)
+replace employed = 1 if inrange(year, 2018, 2020) & inlist(PL031, 1, 2)
 replace employed = 1 if inrange(year, 2021, 2024) & PL032 == 1 & PL040A == 3
 label variable employed "Employed persons (current employee, les==3 equivalent)"
 
@@ -64,7 +64,7 @@ label variable employed "Employed persons (current employee, les==3 equivalent)"
 ********************************************************************************
 
 gen byte working = .
-replace working = inrange(PL031, 1, 4) if inrange(year, 2019, 2020) & !missing(PL031)
+replace working = inrange(PL031, 1, 4) if inrange(year, 2018, 2020) & !missing(PL031)
 replace working = (PL032 == 1) if inrange(year, 2021, 2024) & !missing(PL032)
 label variable working "Currently working (any status)"
 

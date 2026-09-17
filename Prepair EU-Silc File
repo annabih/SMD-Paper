@@ -7,7 +7,7 @@
 clear all
 set more off
 
-global data "D:\Data\AT_CROSS"
+global data "Y:\Desktop\USB    \D:\Data\AT_CROSS"
 
 use "$data/SILC_CrossSec_2018_2024_MAII.dta", clear
 

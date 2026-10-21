@@ -149,7 +149,15 @@ restore
 capture drop smd_sample
 gen byte smd_sample = (!missing(smd_grp) & !missing(smd) & inrange(year, 2018, 2024))
 
-svyset [pw=dwt], vce(linearized)
+capture drop smd_sample
+gen byte smd_sample = (!missing(smd_grp) & !missing(smd) & inrange(year, 2018, 2024))
+
+capture drop hh_cl
+egen long hh_cl = group(year idhh)
+svyset hh_cl [pw=dwt], vce(linearized)
+
+svy, subpop(smd_sample): logit smd i.smd_grp
+margins smd_grp, subpop(smd_sample) vce(unconditional) post
 
 svy, subpop(smd_sample): logit smd i.smd_grp
 margins smd_grp, subpop(smd_sample) vce(unconditional) post

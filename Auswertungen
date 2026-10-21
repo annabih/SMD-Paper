@@ -8,7 +8,7 @@
 ***   IWP Employees: >= 7 months as employee, age 18-64, below threshold (pre: iw_arop_pre_rel, post: iw_poor_post_rel)
 ***   AROP w/o IWP:  < 7 months worked in any status, all ages, below threshold (axi_pre_rel, axi_post_rel)
 ***   SMD comparison: both 18-64, without old-age benefit recipients (smd_grp)
-*** Money amounts: monthly EUR, nominal and real (HICP Austria, prices of 2023)
+*** Money amounts: monthly EUR, nominal; gaps and euro bands additionally real (HICP Austria, prices of 2023)
 *** year = UDB survey year (income reference year = year - 1)
 *** Table "Total" rows = pooled over all years (person-weighted)
 *** Requires: Stata 17 or newer (table ..., statistic())
@@ -54,19 +54,19 @@ restore
 
 
 *******************************************************************************************************************************************************************************************
-*** PART 1: Income position - equivalised income of the poor, nominal and real (monthly EUR)
+*** PART 1: Income position - equivalised income of the poor (monthly EUR, nominal)
 *******************************************************************************************************************************************************************************************
 
-*** Poverty threshold, nominal and real
-table year, statistic(mean poverty_threshold_rel) statistic(mean threshold_real) nototals nformat(%12.2fc mean)
+*** Poverty threshold
+table year, statistic(mean poverty_threshold_rel) nototals nformat(%12.2fc mean)
 
 *** IWP Employees
-table year if iw_arop_pre_rel == 1 [aw=dwt], statistic(mean pre_disp_hh_income_equ) statistic(p50 pre_disp_hh_income_equ) statistic(mean pre_real) statistic(p50 pre_real) statistic(mean inc_rel_pre) nformat(%12.2fc mean p50)
-table year if iw_poor_post_rel == 1 [aw=dwt], statistic(mean post_disp_hh_income_equ) statistic(p50 post_disp_hh_income_equ) statistic(mean post_real) statistic(p50 post_real) statistic(mean inc_rel) nformat(%12.2fc mean p50)
+table year if iw_arop_pre_rel == 1 [aw=dwt], statistic(mean pre_disp_hh_income_equ) statistic(p50 pre_disp_hh_income_equ) statistic(mean inc_rel_pre) nformat(%12.2fc mean p50)
+table year if iw_poor_post_rel == 1 [aw=dwt], statistic(mean post_disp_hh_income_equ) statistic(p50 post_disp_hh_income_equ) statistic(mean inc_rel) nformat(%12.2fc mean p50)
 
 *** AROP w/o IWP
-table year if axi_pre_rel == 1 [aw=dwt], statistic(mean pre_disp_hh_income_equ) statistic(p50 pre_disp_hh_income_equ) statistic(mean pre_real) statistic(p50 pre_real) statistic(mean inc_rel_pre) nformat(%12.2fc mean p50)
-table year if axi_post_rel == 1 [aw=dwt], statistic(mean post_disp_hh_income_equ) statistic(p50 post_disp_hh_income_equ) statistic(mean post_real) statistic(p50 post_real) statistic(mean inc_rel) nformat(%12.2fc mean p50)
+table year if axi_pre_rel == 1 [aw=dwt], statistic(mean pre_disp_hh_income_equ) statistic(p50 pre_disp_hh_income_equ) statistic(mean inc_rel_pre) nformat(%12.2fc mean p50)
+table year if axi_post_rel == 1 [aw=dwt], statistic(mean post_disp_hh_income_equ) statistic(p50 post_disp_hh_income_equ) statistic(mean inc_rel) nformat(%12.2fc mean p50)
 
 
 *******************************************************************************************************************************************************************************************
@@ -78,6 +78,19 @@ table year [pw=dwt], statistic(mean gap_pre_rel) statistic(mean gap_post_rel) st
 
 *** Real (prices 2023)
 table year [pw=dwt], statistic(mean gap_pre_rel_real) statistic(mean gap_post_rel_real) statistic(mean gap_axi_pre_rel_real) statistic(mean gap_axi_post_rel_real) nformat(%12.2fc mean)
+
+*** Real gap over time: change vs. first available year (EUR and relative change in %)
+preserve
+collapse (mean) iwp_pre=gap_pre_rel_real iwp_post=gap_post_rel_real axi_pre=gap_axi_pre_rel_real axi_post=gap_axi_post_rel_real [pw=dwt], by(year)
+sort year
+foreach v in iwp_pre iwp_post axi_pre axi_post {
+    gen double `v'_d = `v' - `v'[1]
+    gen double `v'_pct = 100 * (`v' / `v'[1] - 1)
+}
+format iwp_* axi_* %9.2f
+list year iwp_post iwp_post_d iwp_post_pct axi_post axi_post_d axi_post_pct, noobs abbreviate(12) separator(0)
+list year iwp_pre iwp_pre_d iwp_pre_pct axi_pre axi_pre_d axi_pre_pct, noobs abbreviate(12) separator(0)
+restore
 
 *** In % of threshold
 table year [pw=dwt], statistic(mean gap_pre_rel_pct) statistic(mean gap_post_rel_pct) statistic(mean gap_axi_pre_rel_pct) statistic(mean gap_axi_post_rel_pct) nformat(%12.2fc mean)
@@ -119,17 +132,24 @@ foreach v in gap_pre_rel gap_post_rel gap_axi_pre_rel gap_axi_post_rel {
 
 
 *******************************************************************************************************************************************************************************************
-*** PART 4: Distribution of the poor across euro bands below the threshold (nominal, share in each band, in %)
+*** PART 4: Distribution of the poor across euro bands below the threshold (share in each band, in %)
+*** Nominal and real (prices 2023): does poverty get deeper in real terms?
 *** The six band shares within one group sum to 100
 *******************************************************************************************************************************************************************************************
 
-*** IWP Employees
-table year if iw_arop_pre_rel == 1 [pw=dwt], statistic(mean pct_b1_pre_rel) statistic(mean pct_b2_pre_rel) statistic(mean pct_b3_pre_rel) statistic(mean pct_b4_pre_rel) statistic(mean pct_b5_pre_rel) statistic(mean pct_b6_pre_rel) nformat(%12.2fc mean)
-table year if iw_poor_post_rel == 1 [pw=dwt], statistic(mean pct_b1_post_rel) statistic(mean pct_b2_post_rel) statistic(mean pct_b3_post_rel) statistic(mean pct_b4_post_rel) statistic(mean pct_b5_post_rel) statistic(mean pct_b6_post_rel) nformat(%12.2fc mean)
+foreach r in "" "_real" {
 
-*** AROP w/o IWP
-table year if axi_pre_rel == 1 [pw=dwt], statistic(mean pct_b1_axi_pre_rel) statistic(mean pct_b2_axi_pre_rel) statistic(mean pct_b3_axi_pre_rel) statistic(mean pct_b4_axi_pre_rel) statistic(mean pct_b5_axi_pre_rel) statistic(mean pct_b6_axi_pre_rel) nformat(%12.2fc mean)
-table year if axi_post_rel == 1 [pw=dwt], statistic(mean pct_b1_axi_post_rel) statistic(mean pct_b2_axi_post_rel) statistic(mean pct_b3_axi_post_rel) statistic(mean pct_b4_axi_post_rel) statistic(mean pct_b5_axi_post_rel) statistic(mean pct_b6_axi_post_rel) nformat(%12.2fc mean)
+    if "`r'" == "" di _n(2) as result "=================== Euro bands: nominal ==================="
+    if "`r'" == "_real" di _n(2) as result "=================== Euro bands: real (prices 2023) ==================="
+
+    di _n as result "--- IWP Employees, pre / post ---"
+    table year if iw_arop_pre_rel == 1 [pw=dwt], statistic(mean pct_b1_pre_rel`r') statistic(mean pct_b2_pre_rel`r') statistic(mean pct_b3_pre_rel`r') statistic(mean pct_b4_pre_rel`r') statistic(mean pct_b5_pre_rel`r') statistic(mean pct_b6_pre_rel`r') nformat(%12.2fc mean)
+    table year if iw_poor_post_rel == 1 [pw=dwt], statistic(mean pct_b1_post_rel`r') statistic(mean pct_b2_post_rel`r') statistic(mean pct_b3_post_rel`r') statistic(mean pct_b4_post_rel`r') statistic(mean pct_b5_post_rel`r') statistic(mean pct_b6_post_rel`r') nformat(%12.2fc mean)
+
+    di _n as result "--- AROP w/o IWP, pre / post ---"
+    table year if axi_pre_rel == 1 [pw=dwt], statistic(mean pct_b1_axi_pre_rel`r') statistic(mean pct_b2_axi_pre_rel`r') statistic(mean pct_b3_axi_pre_rel`r') statistic(mean pct_b4_axi_pre_rel`r') statistic(mean pct_b5_axi_pre_rel`r') statistic(mean pct_b6_axi_pre_rel`r') nformat(%12.2fc mean)
+    table year if axi_post_rel == 1 [pw=dwt], statistic(mean pct_b1_axi_post_rel`r') statistic(mean pct_b2_axi_post_rel`r') statistic(mean pct_b3_axi_post_rel`r') statistic(mean pct_b4_axi_post_rel`r') statistic(mean pct_b5_axi_post_rel`r') statistic(mean pct_b6_axi_post_rel`r') nformat(%12.2fc mean)
+}
 
 
 *******************************************************************************************************************************************************************************************
@@ -156,8 +176,8 @@ local s_axi = r(mean)
 di as result "IWP Employees minus AROP w/o IWP: " %6.2f (`s_iwp' - `s_axi') " pp, " %6.1f (100 * (`s_iwp' / `s_axi' - 1)) " %"
 restore
 
-*** Income position of the two SMD groups (post, % of threshold; nominal and real EUR)
-table smd_grp if !missing(smd) & inrange(year, 2018, 2024) [aw=dwt], statistic(mean inc_rel) statistic(p50 inc_rel) statistic(mean post_disp_hh_income_equ) statistic(mean post_real) nformat(%9.2f mean p50)
+*** Income position of the two SMD groups (post, % of threshold and nominal EUR)
+table smd_grp if !missing(smd) & inrange(year, 2018, 2024) [aw=dwt], statistic(mean inc_rel) statistic(p50 inc_rel) statistic(mean post_disp_hh_income_equ) nformat(%9.2f mean p50)
 
 *** Pooled survey estimates with pp difference and relative change
 *** Model 1: raw difference

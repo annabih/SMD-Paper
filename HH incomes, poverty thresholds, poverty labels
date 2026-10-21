@@ -170,41 +170,35 @@ label variable hicp_inc "HICP Austria of income reference year (2015 = 100)"
 gen double defl = 130.40 / hicp_inc
 label variable defl "Deflator to prices of 2023"
 
-gen double post_real = post_disp_hh_income_equ * defl
-gen double pre_real = pre_disp_hh_income_equ * defl
-gen double threshold_real = poverty_threshold_rel * defl
-label variable post_real "Post-transfer equivalised income, monthly, real (prices 2023)"
-label variable pre_real "Pre-transfer equivalised income, monthly, real (prices 2023)"
-label variable threshold_real "Poverty threshold, monthly, real (prices 2023)"
-
+* Real values only for the distance to the threshold (gaps and euro bands)
 foreach g in pre_rel post_rel axi_pre_rel axi_post_rel {
     gen double gap_`g'_real = gap_`g' * defl
     label variable gap_`g'_real "Poverty gap `g', monthly, real (prices 2023)"
 }
 
 ********************************************************************************
-* Euro bands below the threshold (monthly EUR, nominal)
+* Euro bands below the threshold (monthly EUR), nominal and real (prices 2023)
 * Bands: (0,100], (100,250], (250,500], (500,750], (750,1000], >1000
+* Suffix "" = nominal, "_real" = real
 ********************************************************************************
 
 label define bandlbl 1 "(0,100]" 2 "(100,250]" 3 "(250,500]" 4 "(500,750]" 5 "(750,1000]" 6 ">1000"
 
 foreach g in pre_rel post_rel axi_pre_rel axi_post_rel {
-    gen byte band_`g' = .
-    replace band_`g' = 1 if gap_`g' > 0 & gap_`g' <= 100 & !missing(gap_`g')
-    replace band_`g' = 2 if gap_`g' > 100 & gap_`g' <= 250 & !missing(gap_`g')
-    replace band_`g' = 3 if gap_`g' > 250 & gap_`g' <= 500 & !missing(gap_`g')
-    replace band_`g' = 4 if gap_`g' > 500 & gap_`g' <= 750 & !missing(gap_`g')
-    replace band_`g' = 5 if gap_`g' > 750 & gap_`g' <= 1000 & !missing(gap_`g')
-    replace band_`g' = 6 if gap_`g' > 1000 & !missing(gap_`g')
-    label values band_`g' bandlbl
-    label variable band_`g' "Euro distance below threshold, `g'"
-    gen byte pct_b1_`g' = 100 * (band_`g' == 1) if !missing(band_`g')
-    gen byte pct_b2_`g' = 100 * (band_`g' == 2) if !missing(band_`g')
-    gen byte pct_b3_`g' = 100 * (band_`g' == 3) if !missing(band_`g')
-    gen byte pct_b4_`g' = 100 * (band_`g' == 4) if !missing(band_`g')
-    gen byte pct_b5_`g' = 100 * (band_`g' == 5) if !missing(band_`g')
-    gen byte pct_b6_`g' = 100 * (band_`g' == 6) if !missing(band_`g')
+    foreach r in "" "_real" {
+        gen byte band_`g'`r' = .
+        replace band_`g'`r' = 1 if gap_`g'`r' > 0 & gap_`g'`r' <= 100 & !missing(gap_`g'`r')
+        replace band_`g'`r' = 2 if gap_`g'`r' > 100 & gap_`g'`r' <= 250 & !missing(gap_`g'`r')
+        replace band_`g'`r' = 3 if gap_`g'`r' > 250 & gap_`g'`r' <= 500 & !missing(gap_`g'`r')
+        replace band_`g'`r' = 4 if gap_`g'`r' > 500 & gap_`g'`r' <= 750 & !missing(gap_`g'`r')
+        replace band_`g'`r' = 5 if gap_`g'`r' > 750 & gap_`g'`r' <= 1000 & !missing(gap_`g'`r')
+        replace band_`g'`r' = 6 if gap_`g'`r' > 1000 & !missing(gap_`g'`r')
+        label values band_`g'`r' bandlbl
+        label variable band_`g'`r' "Euro distance below threshold, `g'`r'"
+        forvalues k = 1/6 {
+            gen byte pct_b`k'_`g'`r' = 100 * (band_`g'`r' == `k') if !missing(band_`g'`r')
+        }
+    }
 }
 
 ********************************************************************************
@@ -232,11 +226,35 @@ tab year smd_grp, missing
 gen double inc_rel = 100 * post_disp_hh_income_equ / poverty_threshold_rel if !missing(post_disp_hh_income_equ, poverty_threshold_rel)
 label variable inc_rel "Equivalised post-transfer income in % of poverty threshold"
 
-* Household composition (children < 18, adults 18+), counted within year and household
-bysort year idhh: egen n_children = total(dag < 18 & !missing(dag))
-bysort year idhh: egen n_adults = total(dag >= 18 & !missing(dag))
-label variable n_children "Number of children (< 18) in household"
-label variable n_adults "Number of adults (18+) in household"
+* Household composition, counted within year and household
+* Children < 14 / adults 14+ (as in the earlier IWP-SMD scripts and the modified OECD scale)
+bysort year idhh: egen n_children = total(dag < 14 & !missing(dag))
+bysort year idhh: egen n_adults = total(dag >= 14 & !missing(dag))
+label variable n_children "Number of children (< 14) in household"
+label variable n_adults "Number of persons 14+ in household"
+
+* Household type (as in the earlier IWP-SMD scripts)
+gen byte hh_type = .
+replace hh_type = 1 if n_adults == 1 & n_children == 0
+replace hh_type = 2 if n_adults == 1 & n_children == 1
+replace hh_type = 3 if n_adults == 1 & n_children >= 2
+replace hh_type = 4 if n_adults == 2 & n_children == 0
+replace hh_type = 5 if n_adults == 2 & n_children == 1
+replace hh_type = 6 if n_adults == 2 & n_children == 2
+replace hh_type = 7 if n_adults == 2 & n_children >= 3
+replace hh_type = 8 if n_adults >= 3 & n_children == 0
+replace hh_type = 9 if n_adults >= 3 & n_children >= 1
+label define hhtypelbl 1 "1 adult" 2 "1 adult + 1 child" 3 "1 adult + 2+ children" 4 "2 adults" 5 "2 adults + 1 child" 6 "2 adults + 2 children" 7 "2 adults + 3+ children" 8 "3+ adults" 9 "3+ adults + children"
+label values hh_type hhtypelbl
+label variable hh_type "Household type"
+
+* Children categories
+gen byte has_kids = (n_children > 0)
+gen byte n_ch_cat = min(n_children, 3)
+label define nchcat 0 "0" 1 "1" 2 "2" 3 "3+"
+label values n_ch_cat nchcat
+label variable has_kids "Household with children (< 14)"
+label variable n_ch_cat "Number of children (< 14), 0/1/2/3+"
 
 * Age groups (SMD groups are 18-64)
 gen byte age_grp = .

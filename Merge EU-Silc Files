@@ -4,7 +4,7 @@
 *** Aim: Merge R, D, H, P files per year and append all available years into one dataset
 *** Note: All variables imported as strings (as in MA-II) to avoid type conflicts when appending; destring happens in script 02
 *** Note: year = UDB survey year (income reference year = year - 1)
-*** Note: Years 2018-2024; years without complete CSV files are skipped automatically
+*** Note: Years 2018-2024; years without complete CSV files are skipped automatically (no 2018 folder -> effectively 2019-2024)
 *******************************************************************************************************************************************************************************************
 clear all
 set more off
@@ -62,8 +62,10 @@ foreach yr of local years {
     rename PX030 idhh
 
     * Merge personal files (keeps R-only persons such as children)
+    * Every P person must be in the R register (_merge == 1 would be P-only)
     merge 1:1 idperson using `p_register'
     tab _merge
+    assert _merge != 1
     drop _merge
 
     * Merge household files

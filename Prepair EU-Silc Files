@@ -1,10 +1,17 @@
 *******************************************************************************************************************************************************************************************
 *** Title: Prepare EU-SILC analysis file (MA-II logic on EU-SILC)
 *** Replaces: "Create pre post policy file"
-*** Aim: Destring, weights, age, employment status (EUROMOD les==3 equivalent), activity status, SMD
+*** Aim: Destring, weights, age, worker definition (months in income reference year), old-age benefits, SMD (RX060), AROPE (RX070)
 *** Note: No policy scenario exists on EU-SILC, therefore no append and no scenario variable
 *** Input: SILC_CrossSec_All_Years.dta (from script 01)
 *** Output: SILC_All_Years_Prepared.dta
+*** Definitions (checked against EU-SILC UDB codebooks 2017-2024):
+***   - worker = >= 7 months as employee (PL073 + PL074) in income reference year, age 18-64
+***     no emp_status (PL040/PL040A) condition: PL040 (2015-2020) is filled for anyone who ever worked,
+***     PL040A (2021-2024) only for the currently employed -> not consistent across years
+***   - any_worker = >= 7 months in any status (PL073-PL076), age 18-64 -> excluded from comparison group
+***   - RX060 = old SMD (4 of 9 items) in 2017-2020, SMSD (7 of 13 items) from 2021 -> series break, kept as is
+***   - RX070 = 3-digit code (hundreds = AROP, tens = SMD/SMSD, ones = LWI); same break in 2021
 *******************************************************************************************************************************************************************************************
 clear all
 set more off
@@ -16,7 +23,7 @@ use "Y:/Desktop/USB/SMSD_Paper/SILC_CrossSec_All_Years.dta", clear
 * Destring (decimal comma -> point); create empty variable if not available
 ********************************************************************************
 
-local numvars "HY020 HY022 HX050 HX090 HX080 RB050 PB040 RX010 PX010 PL031 PL032 PL040 PL040A RX060"
+local numvars "HY020 HY022 HX050 HX090 HX080 RB050 PB040 RX010 PX010 PL073 PL074 PL075 PL076 PY100G RX060 RX070"
 
 foreach var of local numvars {
     capture confirm variable `var'
@@ -28,7 +35,7 @@ foreach var of local numvars {
         }
     }
     else {
-        gen `var' = .
+        gen double `var' = .
         di as text "`var' not found, created as missing"
     }
 }
@@ -41,58 +48,73 @@ gen double dwt = RB050
 replace dwt = PB040 if missing(dwt)
 label variable dwt "Personal cross-sectional weight (RB050, else PB040)"
 
+count if missing(RB050)
+
 gen dag = RX010
 replace dag = PX010 if missing(dag)
 label variable dag "Age (RX010, else PX010)"
 
 ********************************************************************************
-* Employed = current employee (equivalent of EUROMOD les == 3)
-* 2018-2020: PL031 = 1 (employee full-time) or 2 (employee part-time)
-* 2021-2024: PL032 = 1 (employed) and PL040A = 3 (employee, current main job)
-* PL040 (2015-2020) is NOT used here: it is also filled for persons who have ever
-* worked (PL015 = 1), i.e. it can refer to the last job of retired or unemployed persons
+* Months in income reference year (PL073-PL076), capped at 12
 ********************************************************************************
 
-gen byte employed = 0
-replace employed = 1 if inrange(year, 2018, 2020) & inlist(PL031, 1, 2)
-replace employed = 1 if inrange(year, 2021, 2024) & PL032 == 1 & PL040A == 3
-label variable employed "Employed persons (current employee, les==3 equivalent)"
+* Months as employee (full-time + part-time)
+egen months_emp = rowtotal(PL073 PL074), missing
+replace months_emp = 12 if months_emp > 12 & !missing(months_emp)
+label variable months_emp "Months as employee in income reference year (PL073+PL074)"
+
+* Months worked in any status (employee or self-employed)
+egen months_worked = rowtotal(PL073 PL074 PL075 PL076), missing
+replace months_worked = 12 if months_worked > 12 & !missing(months_worked)
+label variable months_worked "Months worked in any status (PL073-PL076)"
 
 ********************************************************************************
-* Working = currently working in any status (employee or self-employed)
-* Used to define the non-working comparison group (AROP w/o IWP)
+* Worker = >= 7 months as employee, age 18-64 (no emp_status condition)
+* any_worker = >= 7 months in any status, age 18-64 (excluded from comparison group)
 ********************************************************************************
 
-gen byte working = .
-replace working = inrange(PL031, 1, 4) if inrange(year, 2018, 2020) & !missing(PL031)
-replace working = (PL032 == 1) if inrange(year, 2021, 2024) & !missing(PL032)
-label variable working "Currently working (any status)"
+gen byte worker = (months_emp >= 7) if !missing(months_emp) & inrange(dag, 18, 64)
+label variable worker "Employee >= 7 months in income reference year, age 18-64"
+
+gen byte employed = (worker == 1)
+label variable employed "Worker (employee >= 7 months), used as filter in scripts 03/04"
+
+gen byte any_worker = (months_worked >= 7 & !missing(months_worked) & inrange(dag, 18, 64))
+label variable any_worker "Worked >= 7 months in any status, age 18-64"
+
+tab year employed if inrange(dag, 18, 64), missing
+tab employed any_worker if inrange(dag, 18, 64), missing
 
 ********************************************************************************
-* Diagnostic: comparison with project convention (PL040 / PL040A == 3)
+* Old-age benefits in income reference year (person level)
+* Missing (e.g. children without P record) -> 0
+* Survivor benefits (PY110G) are deliberately kept in the comparison group
 ********************************************************************************
 
-gen emp_status_conv = .
-replace emp_status_conv = PL040 if inrange(year, 2015, 2020)
-replace emp_status_conv = PL040A if inrange(year, 2021, 2024)
-label variable emp_status_conv "Status in employment (PL040/PL040A), project convention"
+gen byte oldage_ben = (PY100G > 0 & !missing(PY100G))
+label variable oldage_ben "Receives old-age benefits (PY100G > 0)"
 
-di _n "=== Current employee vs. PL040/PL040A == 3, age 18-64 ===" _n
-table year if inrange(dag, 18, 64) [pw=dwt], statistic(mean employed) nototals
-gen byte emp_conv3 = (emp_status_conv == 3)
-table year if inrange(dag, 18, 64) [pw=dwt], statistic(mean emp_conv3) nototals
-drop emp_conv3
+tab year oldage_ben if inrange(dag, 18, 64) & any_worker == 0, missing
 
 ********************************************************************************
-* Severe material and social deprivation (RX060)
-* Check the RX060 label in each year's codebook (2018 codebook: "severely
-* materially deprived household"; 2024 codebook: "severely materially and
-* socially deprived household")
+* RX060: old SMD (2017-2020) vs. SMSD (2021-2024) - series break, kept as is
+* RX070: 3-digit code (hundreds = AROP, tens = SMD/SMSD, ones = LWI)
 ********************************************************************************
 
 gen byte smd = RX060 if inlist(RX060, 0, 1)
-label variable smd "Severe (material and social) deprivation, RX060"
+label variable smd "Severe (material and social) deprivation, RX060 (break 2021)"
+
+gen byte arope = (RX070 > 0) if !missing(RX070)
+label variable arope "AROPE, RX070 > 0"
+
+gen byte arope_arp = (floor(RX070 / 100) == 1) if !missing(RX070)
+gen byte arope_smd = (mod(floor(RX070 / 10), 10) == 1) if !missing(RX070)
+gen byte arope_lwi = (mod(RX070, 10) == 1) if !missing(RX070)
+label variable arope_arp "AROPE component: at risk of poverty"
+label variable arope_smd "AROPE component: severe (material and social) deprivation"
+label variable arope_lwi "AROPE component: low work intensity"
 
 tab year smd, missing
+tab year arope, missing
 
 save "Y:/Desktop/USB/SMSD_Paper/SILC_All_Years_Prepared.dta", replace

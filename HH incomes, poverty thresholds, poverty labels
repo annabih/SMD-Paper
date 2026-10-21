@@ -4,10 +4,11 @@
 *** Aim: Equivalised pre/post-transfer income, relative threshold, in-work poverty, AROP w/o IWP, gaps, euro bands, SMD groups
 *** Changes vs. MA-II:
 ***   - Income from UDB household variables instead of EUROMOD income lists
-***     post = HY020 / HX050, pre = HY022 / HX050 (before social transfers other than pensions)
+***     post = HY020 / HX050, pre = HY022 / HX050 (before social transfers other than old-age and survivor benefits)
 ***   - UDB incomes are annual -> divided by 12 so that all amounts are monthly (as in EUROMOD output)
 ***   - No anchored threshold and no threshold effects (no policy scenario on EU-SILC)
-***   - New: AROP w/o IWP comparison group (not working, age 18-64) and SMD group variable
+***   - AROP w/o IWP = poor and not working >= 7 months in any status (any_worker == 0), all ages
+***   - SMD groups: both 18-64, old-age benefit recipients excluded
 *******************************************************************************************************************************************************************************************
 clear all
 set more off
@@ -18,10 +19,11 @@ use "Y:/Desktop/USB/SMSD_Paper/SILC_All_Years_Prepared.dta", clear
 ********************************************************************************
 * Equivalised household income (monthly)
 * HY020 / HY022 are household totals and must be equivalised with HX050
+* Both bounded at 0 (negative incomes -> 0), so gaps in % are comparable pre/post
 * max() returns 0 for missing arguments -> guarded by if conditions
 ********************************************************************************
 
-gen double post_disp_hh_income_equ = (HY020 / HX050) / 12 if !missing(HY020, HX050) & HX050 > 0
+gen double post_disp_hh_income_equ = max((HY020 / HX050) / 12, 0) if !missing(HY020, HX050) & HX050 > 0
 gen double pre_disp_hh_income_equ = max((HY022 / HX050) / 12, 0) if !missing(HY022, HX050) & HX050 > 0
 
 label variable post_disp_hh_income_equ "Post-transfer disposable household income, equalised, monthly (HY020/HX050)"
@@ -52,7 +54,7 @@ di _n "=== Monthly poverty thresholds ===" _n
 table year, statistic(mean poverty_threshold_rel) nototals nformat(%12.2fc mean)
 
 ********************************************************************************
-* In-work poverty indicators (employed = current employee)
+* In-work poverty indicators (employed = employee >= 7 months, age 18-64)
 ********************************************************************************
 
 gen byte iw_arop_pre_rel = pre_disp_hh_income_equ < poverty_threshold_rel if employed == 1 & !missing(pre_disp_hh_income_equ, poverty_threshold_rel)
@@ -63,6 +65,9 @@ label variable iw_poor_post_rel "Below relative poverty threshold, post-transfer
 
 gen byte diff_rel = iw_arop_pre_rel - iw_poor_post_rel if employed == 1
 label variable diff_rel "Difference pre - post, relative threshold"
+
+* Sanity check: post >= pre for (almost) everyone, so diff_rel should not be negative
+tab diff_rel if employed == 1, missing
 
 ********************************************************************************
 * AROP indicators, total population
@@ -82,15 +87,16 @@ di _n "=== Check: own AROP post vs. HX080 ===" _n
 tab arop_post_rel HX080 if !missing(HX080), missing
 
 ********************************************************************************
-* NEW: AROP without IWP = not working (any status), age 18-64, below threshold
-* Defined among non-working 18-64 year olds (analogous to iw_ among employed)
+* AROP without IWP = not working >= 7 months in any status, below threshold
+* All ages (general descriptives); restricted to 18-64 only for the SMD comparison
+* Poor self-employed workers are in neither group
 ********************************************************************************
 
-gen byte axi_pre_rel = pre_disp_hh_income_equ < poverty_threshold_rel if working == 0 & inrange(dag, 18, 64) & !missing(pre_disp_hh_income_equ, poverty_threshold_rel)
-gen byte axi_post_rel = post_disp_hh_income_equ < poverty_threshold_rel if working == 0 & inrange(dag, 18, 64) & !missing(post_disp_hh_income_equ, poverty_threshold_rel)
+gen byte axi_pre_rel = pre_disp_hh_income_equ < poverty_threshold_rel if any_worker == 0 & !missing(pre_disp_hh_income_equ, poverty_threshold_rel)
+gen byte axi_post_rel = post_disp_hh_income_equ < poverty_threshold_rel if any_worker == 0 & !missing(post_disp_hh_income_equ, poverty_threshold_rel)
 
-label variable axi_pre_rel "AROP w/o IWP (not working, 18-64), pre-transfer, relative threshold"
-label variable axi_post_rel "AROP w/o IWP (not working, 18-64), post-transfer, relative threshold"
+label variable axi_pre_rel "AROP w/o IWP (not working, all ages), pre-transfer, relative threshold"
+label variable axi_post_rel "AROP w/o IWP (not working, all ages), post-transfer, relative threshold"
 
 gen byte axi_diff_rel = axi_pre_rel - axi_post_rel
 label variable axi_diff_rel "AROP w/o IWP diff pre - post, relative threshold"
@@ -145,7 +151,7 @@ label variable gap_axi_pre_rel_pct "Poverty gap among AROP w/o IWP in %, pre-tra
 label variable gap_axi_post_rel_pct "Poverty gap among AROP w/o IWP in %, post-transfer"
 
 ********************************************************************************
-* Euro bands below the threshold (monthly EUR)
+* Euro bands below the threshold (monthly EUR, nominal)
 * Bands: (0,100], (100,250], (250,500], (500,750], (750,1000], >1000
 ********************************************************************************
 
@@ -170,15 +176,16 @@ foreach g in pre_rel post_rel axi_pre_rel axi_post_rel {
 }
 
 ********************************************************************************
-* NEW: SMD comparison groups (post-transfer, both restricted to age 18-64)
+* SMD comparison groups (post-transfer)
+* Both 18-64, old-age benefit recipients (PY100G > 0) excluded
 * 1 = IWP Employees, 0 = AROP w/o IWP
 ********************************************************************************
 
 gen byte smd_grp = .
-replace smd_grp = 1 if employed == 1 & iw_poor_post_rel == 1 & inrange(dag, 18, 64)
-replace smd_grp = 0 if axi_post_rel == 1
+replace smd_grp = 1 if employed == 1 & iw_poor_post_rel == 1 & oldage_ben == 0
+replace smd_grp = 0 if axi_post_rel == 1 & inrange(dag, 18, 64) & oldage_ben == 0
 
-label define smdgrp 0 "AROP w/o IWP (18-64)" 1 "IWP Employees (18-64)"
+label define smdgrp 0 "AROP w/o IWP (18-64, no old-age pension)" 1 "IWP Employees (18-64, no old-age pension)"
 label values smd_grp smdgrp
 label variable smd_grp "SMD comparison group, post-transfer"
 

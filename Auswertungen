@@ -4,6 +4,8 @@
 *** Aim: Counts, rates, gaps, percentiles and euro bands for employed persons; NEW: AROP w/o IWP and SMD comparison
 *** Changes vs. MA-II: table dimension "year scenario" -> "year"; anchored threshold and threshold effects removed
 *** Requires: Stata 17 or newer (table ..., statistic())
+*** Note: no 2018 UDB folder -> analyses effectively cover 2019-2024
+*** Note: smd = RX060 = old SMD until 2020, SMSD from 2021 (series break)
 *******************************************************************************************************************************************************************************************
 
 capture log close
@@ -40,7 +42,7 @@ table year if employed == 1 & inrange(dag,18,64) [pw=dwt], statistic(mean iw_aro
 *** Total population AROP
 table year [pw=dwt], statistic(mean arop_pre_rel) statistic(mean arop_post_rel) nototals
 
-*** NEW: AROP w/o IWP (not working, 18-64): N, weighted N, rate among non-working 18-64
+*** NEW: AROP w/o IWP (not working >= 7 months in any status, all ages): N, weighted N, rate among non-working
 table year if !missing(axi_post_rel), statistic(sum axi_pre_rel) statistic(sum axi_post_rel) statistic(sum axi_diff_rel) nototals
 table year if !missing(axi_post_rel) [pw=dwt], statistic(sum axi_pre_rel) statistic(sum axi_post_rel) statistic(sum axi_diff_rel) nototals nformat(%12.0fc sum)
 table year if !missing(axi_post_rel) [pw=dwt], statistic(mean axi_pre_rel) statistic(mean axi_post_rel) nototals
@@ -71,7 +73,7 @@ table year if employed == 1 & inrange(dag,18,64) [pw=dwt], statistic(mean gap_pr
 table year if employed == 1 & inrange(dag,18,64) [pw=dwt], statistic(mean gap_pre_rel_pct) statistic(mean gap_post_rel_pct) nototals nformat(%12.2fc mean)
 
 ********************************************************************************
-* NEW: Average poverty gap among AROP w/o IWP (18-64), EUR and % of threshold
+* NEW: Average poverty gap among AROP w/o IWP (all ages), EUR and % of threshold
 ********************************************************************************
 
 table year [pw=dwt], statistic(mean gap_axi_pre_rel) statistic(mean gap_axi_post_rel) nototals nformat(%12.2fc mean)
@@ -88,7 +90,7 @@ table year if employed == 1 [pw=dwt], statistic(mean gap_pre_rel) statistic(mean
 *** Employed 18-64
 table year if employed == 1 & inrange(dag,18,64) [pw=dwt], statistic(mean gap_pre_rel) statistic(mean gap_post_rel) nototals nformat(%12.2fc mean)
 
-*** NEW: AROP w/o IWP 18-64
+*** NEW: AROP w/o IWP (all ages)
 table year [pw=dwt], statistic(mean gap_axi_pre_rel) statistic(mean gap_axi_post_rel) nototals nformat(%12.2fc mean)
 
 
@@ -105,7 +107,7 @@ table year if employed == 1 [aw=dwt], statistic(p10 gap_post_rel) statistic(p25 
 table year if employed == 1 & inrange(dag,18,64) [aw=dwt], statistic(p10 gap_pre_rel) statistic(p25 gap_pre_rel) statistic(p50 gap_pre_rel) statistic(p75 gap_pre_rel) statistic(p90 gap_pre_rel) nototals nformat(%12.2fc p10 p25 p50 p75 p90)
 table year if employed == 1 & inrange(dag,18,64) [aw=dwt], statistic(p10 gap_post_rel) statistic(p25 gap_post_rel) statistic(p50 gap_post_rel) statistic(p75 gap_post_rel) statistic(p90 gap_post_rel) nototals nformat(%12.2fc p10 p25 p50 p75 p90)
 
-*** NEW: AROP w/o IWP 18-64
+*** NEW: AROP w/o IWP (all ages)
 table year [aw=dwt], statistic(p10 gap_axi_pre_rel) statistic(p25 gap_axi_pre_rel) statistic(p50 gap_axi_pre_rel) statistic(p75 gap_axi_pre_rel) statistic(p90 gap_axi_pre_rel) nototals nformat(%12.2fc p10 p25 p50 p75 p90)
 table year [aw=dwt], statistic(p10 gap_axi_post_rel) statistic(p25 gap_axi_post_rel) statistic(p50 gap_axi_post_rel) statistic(p75 gap_axi_post_rel) statistic(p90 gap_axi_post_rel) nototals nformat(%12.2fc p10 p25 p50 p75 p90)
 
@@ -123,13 +125,13 @@ table year if employed == 1 & iw_poor_post_rel == 1 [pw=dwt], statistic(mean pct
 table year if employed == 1 & iw_arop_pre_rel == 1 & inrange(dag,18,64) [pw=dwt], statistic(mean pct_b1_pre_rel) statistic(mean pct_b2_pre_rel) statistic(mean pct_b3_pre_rel) statistic(mean pct_b4_pre_rel) statistic(mean pct_b5_pre_rel) statistic(mean pct_b6_pre_rel) nototals nformat(%12.2fc mean)
 table year if employed == 1 & iw_poor_post_rel == 1 & inrange(dag,18,64) [pw=dwt], statistic(mean pct_b1_post_rel) statistic(mean pct_b2_post_rel) statistic(mean pct_b3_post_rel) statistic(mean pct_b4_post_rel) statistic(mean pct_b5_post_rel) statistic(mean pct_b6_post_rel) nototals nformat(%12.2fc mean)
 
-*** NEW: AROP w/o IWP 18-64
+*** NEW: AROP w/o IWP (all ages)
 table year if axi_pre_rel == 1 [pw=dwt], statistic(mean pct_b1_axi_pre_rel) statistic(mean pct_b2_axi_pre_rel) statistic(mean pct_b3_axi_pre_rel) statistic(mean pct_b4_axi_pre_rel) statistic(mean pct_b5_axi_pre_rel) statistic(mean pct_b6_axi_pre_rel) nototals nformat(%12.2fc mean)
 table year if axi_post_rel == 1 [pw=dwt], statistic(mean pct_b1_axi_post_rel) statistic(mean pct_b2_axi_post_rel) statistic(mean pct_b3_axi_post_rel) statistic(mean pct_b4_axi_post_rel) statistic(mean pct_b5_axi_post_rel) statistic(mean pct_b6_axi_post_rel) nototals nformat(%12.2fc mean)
 
 
 *******************************************************************************************************************************************************************************************
-*** PART 4 (NEW): Severe material and social deprivation - IWP Employees vs. AROP w/o IWP (both 18-64, post-transfer)
+*** PART 4 (NEW): Severe material and social deprivation - IWP Employees vs. AROP w/o IWP (both 18-64, no old-age pension, post-transfer)
 *******************************************************************************************************************************************************************************************
 
 *** SMD share by year and group (weighted) and unweighted N
@@ -149,15 +151,10 @@ restore
 capture drop smd_sample
 gen byte smd_sample = (!missing(smd_grp) & !missing(smd) & inrange(year, 2018, 2024))
 
-capture drop smd_sample
-gen byte smd_sample = (!missing(smd_grp) & !missing(smd) & inrange(year, 2018, 2024))
-
+* Household cluster (persons in the same household are not independent); idhh unique only within year
 capture drop hh_cl
 egen long hh_cl = group(year idhh)
 svyset hh_cl [pw=dwt], vce(linearized)
-
-svy, subpop(smd_sample): logit smd i.smd_grp
-margins smd_grp, subpop(smd_sample) vce(unconditional) post
 
 svy, subpop(smd_sample): logit smd i.smd_grp
 margins smd_grp, subpop(smd_sample) vce(unconditional) post

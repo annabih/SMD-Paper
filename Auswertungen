@@ -147,23 +147,51 @@ replace smd = smd * 100
 list, noobs
 restore
 
-*** Pooled 2018-2024 survey estimate with pp difference and relative change
-capture drop smd_sample
-gen byte smd_sample = (!missing(smd_grp) & !missing(smd) & inrange(year, 2018, 2024))
+*** Mean income position (% of threshold) by group: raw gap may partly reflect income differences
+table smd_grp if !missing(smd) & inrange(year, 2018, 2024) [pw=dwt], statistic(mean inc_rel) statistic(p50 inc_rel) nototals nformat(%9.2f mean p50)
+
+*** Survey estimates with pp difference and relative change
+*** Samples: pooled, 2018-2020 (RX060 = old SMD) and 2021-2024 (RX060 = SMSD), because of the series break
+*** Model 1: raw difference
+*** Model 2: + income position (inc_rel) and year fixed effects -> "beyond income"
+*** Model 3: + age group, sex, number of children and adults in household
+*** margins = average predicted SMD shares per group (other covariates at observed values)
+
+capture drop smd_s_all smd_s_1820 smd_s_2124
+gen byte smd_s_all = (!missing(smd_grp) & !missing(smd) & inrange(year, 2018, 2024))
+gen byte smd_s_1820 = (smd_s_all == 1 & inrange(year, 2018, 2020))
+gen byte smd_s_2124 = (smd_s_all == 1 & inrange(year, 2021, 2024))
 
 * Household cluster (persons in the same household are not independent); idhh unique only within year
+* DB050 (strata) is only provided for CH; Austria: household as clustering unit
 capture drop hh_cl
 egen long hh_cl = group(year idhh)
 svyset hh_cl [pw=dwt], vce(linearized)
 
-svy, subpop(smd_sample): logit smd i.smd_grp
-margins smd_grp, subpop(smd_sample) vce(unconditional) post
+foreach s in smd_s_all smd_s_1820 smd_s_2124 {
 
-* Difference IWP Employees minus AROP w/o IWP (in shares; x100 = percentage points)
-lincom _b[1.smd_grp] - _b[0bn.smd_grp]
+    di _n(2) as result "=================== Sample: `s' ===================" _n
 
-* Relative change IWP Employees vs. AROP w/o IWP (in %)
-nlcom (rel_change_pct: 100 * (_b[1.smd_grp] / _b[0bn.smd_grp] - 1))
+    di _n as result "--- Model 1: raw ---"
+    svy, subpop(`s'): logit smd i.smd_grp
+    margins smd_grp, subpop(`s') vce(unconditional) post
+    * Difference IWP Employees minus AROP w/o IWP in percentage points
+    lincom 100 * _b[1.smd_grp] - 100 * _b[0bn.smd_grp]
+    * Relative change IWP Employees vs. AROP w/o IWP in %
+    nlcom (rel_change_pct: 100 * (_b[1.smd_grp] / _b[0bn.smd_grp] - 1))
+
+    di _n as result "--- Model 2: + income position, year FE ---"
+    svy, subpop(`s'): logit smd i.smd_grp c.inc_rel i.year
+    margins smd_grp, subpop(`s') vce(unconditional) post
+    lincom 100 * _b[1.smd_grp] - 100 * _b[0bn.smd_grp]
+    nlcom (rel_change_pct: 100 * (_b[1.smd_grp] / _b[0bn.smd_grp] - 1))
+
+    di _n as result "--- Model 3: + age group, sex, household composition ---"
+    svy, subpop(`s'): logit smd i.smd_grp c.inc_rel i.year i.age_grp i.sex c.n_children c.n_adults
+    margins smd_grp, subpop(`s') vce(unconditional) post
+    lincom 100 * _b[1.smd_grp] - 100 * _b[0bn.smd_grp]
+    nlcom (rel_change_pct: 100 * (_b[1.smd_grp] / _b[0bn.smd_grp] - 1))
+}
 
 di as result "=== FERTIG ==="
 

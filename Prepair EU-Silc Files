@@ -23,7 +23,7 @@ use "Y:/Desktop/USB/SMSD_Paper/SILC_CrossSec_All_Years.dta", clear
 * Destring (decimal comma -> point); create empty variable if not available
 ********************************************************************************
 
-local numvars "HY020 HY022 HX050 HX090 HX080 RB050 PB040 RX010 PX010 PL073 PL074 PL075 PL076 PY100G RX060 RX070"
+local numvars "HY020 HY022 HX050 HX090 HX080 RB050 RB090 RX010 PX010 PL073 PL074 PL075 PL076 PY100G RX060 RX070"
 
 foreach var of local numvars {
     capture confirm variable `var'
@@ -44,11 +44,18 @@ foreach var of local numvars {
 * Weight and age (EUROMOD dwt / dag equivalents)
 ********************************************************************************
 
-gen double dwt = RB050
-replace dwt = PB040 if missing(dwt)
-label variable dwt "Personal cross-sectional weight (RB050, else PB040)"
-
+* RB050 missing = RB110 not 1-4 (person no longer in household) -> not part of cross-sectional population
 count if missing(RB050)
+drop if missing(RB050)
+
+gen double dwt = RB050
+label variable dwt "Personal cross-sectional weight (RB050)"
+
+* Sex (R file, available for all persons incl. children)
+gen byte sex = RB090
+label define sexlbl 1 "Male" 2 "Female"
+label values sex sexlbl
+label variable sex "Sex (RB090)"
 
 gen dag = RX010
 replace dag = PX010 if missing(dag)
@@ -79,8 +86,11 @@ label variable worker "Employee >= 7 months in income reference year, age 18-64"
 gen byte employed = (worker == 1)
 label variable employed "Worker (employee >= 7 months), used as filter in scripts 03/04"
 
-gen byte any_worker = (months_worked >= 7 & !missing(months_worked) & inrange(dag, 18, 64))
+* 18-64 with missing months stay missing (not counted as non-workers); outside 18-64 = 0
+gen byte any_worker = (months_worked >= 7) if !missing(months_worked) & inrange(dag, 18, 64)
+replace any_worker = 0 if !inrange(dag, 18, 64)
 label variable any_worker "Worked >= 7 months in any status, age 18-64"
+count if inrange(dag, 18, 64) & missing(months_worked)
 
 tab year employed if inrange(dag, 18, 64), missing
 tab employed any_worker if inrange(dag, 18, 64), missing

@@ -191,4 +191,32 @@ label variable smd_grp "SMD comparison group, post-transfer"
 
 tab year smd_grp, missing
 
+********************************************************************************
+* Controls for the "beyond income" models (script 04, PART 4)
+********************************************************************************
+
+* Income position: equivalised post-transfer income in % of poverty threshold
+* Both SMD groups are below the threshold, so inc_rel lies in [0, 100)
+gen double inc_rel = 100 * post_disp_hh_income_equ / poverty_threshold_rel if !missing(post_disp_hh_income_equ, poverty_threshold_rel)
+label variable inc_rel "Equivalised post-transfer income in % of poverty threshold"
+
+* Household composition (children < 18, adults 18+), counted within year and household
+bysort year idhh: egen n_children = total(dag < 18 & !missing(dag))
+bysort year idhh: egen n_adults = total(dag >= 18 & !missing(dag))
+label variable n_children "Number of children (< 18) in household"
+label variable n_adults "Number of adults (18+) in household"
+
+* Age groups (SMD groups are 18-64)
+gen byte age_grp = .
+replace age_grp = 1 if inrange(dag, 18, 29)
+replace age_grp = 2 if inrange(dag, 30, 44)
+replace age_grp = 3 if inrange(dag, 45, 54)
+replace age_grp = 4 if inrange(dag, 55, 64)
+label define agegrp 1 "18-29" 2 "30-44" 3 "45-54" 4 "55-64"
+label values age_grp agegrp
+label variable age_grp "Age group (18-64)"
+
+* Mean income position by group: are IWP Employees closer to the threshold?
+table year smd_grp [pw=dwt], statistic(mean inc_rel) nototals nformat(%9.2f mean)
+
 save "Y:/Desktop/USB/SMSD_Paper/SILC_All_Years_Adjusted.dta", replace

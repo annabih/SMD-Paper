@@ -10,7 +10,7 @@
 ***     no emp_status (PL040/PL040A) condition: PL040 (2015-2020) is filled for anyone who ever worked,
 ***     PL040A (2021-2024) only for the currently employed -> not consistent across years
 ***   - any_worker = >= 7 months in any status (PL073-PL076), age 18-64 -> excluded from comparison group
-***   - RX060 = old SMD (4 of 9 items) in 2017-2020, SMSD (7 of 13 items) from 2021 -> series break, kept as is
+***   - RX060 used as provided in the UDB for all years
 ***   - RX070 = 3-digit code (hundreds = AROP, tens = SMD/SMSD, ones = LWI); same break in 2021
 *******************************************************************************************************************************************************************************************
 clear all
@@ -107,12 +107,12 @@ label variable oldage_ben "Receives old-age benefits (PY100G > 0)"
 tab year oldage_ben if inrange(dag, 18, 64) & any_worker == 0, missing
 
 ********************************************************************************
-* RX060: old SMD (2017-2020) vs. SMSD (2021-2024) - series break, kept as is
+* RX060 used as provided in the UDB (label changes 2021 from SMD to SMSD)
 * RX070: 3-digit code (hundreds = AROP, tens = SMD/SMSD, ones = LWI)
 ********************************************************************************
 
 gen byte smd = RX060 if inlist(RX060, 0, 1)
-label variable smd "Severe (material and social) deprivation, RX060 (break 2021)"
+label variable smd "Severe material and social deprivation (RX060, used as provided)"
 
 gen byte arope = (RX070 > 0) if !missing(RX070)
 label variable arope "AROPE, RX070 > 0"

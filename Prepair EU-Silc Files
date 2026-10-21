@@ -10,7 +10,7 @@
 ***     no emp_status (PL040/PL040A) condition: PL040 (2015-2020) is filled for anyone who ever worked,
 ***     PL040A (2021-2024) only for the currently employed -> not consistent across years
 ***   - any_worker = >= 7 months in any status (PL073-PL076), age 18-64 -> excluded from comparison group
-***   - RX060 = old SMD (4 of 9 items) in 2017-2020, SMSD (7 of 13 items) from 2021 -> series break, kept as is
+***   - RX060 used as provided in the UDB for all years
 ***   - RX070 = 3-digit code (hundreds = AROP, tens = SMD/SMSD, ones = LWI); same break in 2021
 *******************************************************************************************************************************************************************************************
 clear all
@@ -23,7 +23,7 @@ use "Y:/Desktop/USB/SMSD_Paper/SILC_CrossSec_All_Years.dta", clear
 * Destring (decimal comma -> point); create empty variable if not available
 ********************************************************************************
 
-local numvars "HY020 HY022 HX050 HX090 HX080 RB050 PB040 RX010 PX010 PL073 PL074 PL075 PL076 PY100G RX060 RX070"
+local numvars "HY020 HY022 HX050 HX090 HX080 RB050 RB090 RX010 PX010 PL073 PL074 PL075 PL076 PY100G RX060 RX070"
 
 foreach var of local numvars {
     capture confirm variable `var'
@@ -44,11 +44,18 @@ foreach var of local numvars {
 * Weight and age (EUROMOD dwt / dag equivalents)
 ********************************************************************************
 
-gen double dwt = RB050
-replace dwt = PB040 if missing(dwt)
-label variable dwt "Personal cross-sectional weight (RB050, else PB040)"
-
+* RB050 missing = RB110 not 1-4 (person no longer in household) -> not part of cross-sectional population
 count if missing(RB050)
+drop if missing(RB050)
+
+gen double dwt = RB050
+label variable dwt "Personal cross-sectional weight (RB050)"
+
+* Sex (R file, available for all persons incl. children)
+gen byte sex = RB090
+label define sexlbl 1 "Male" 2 "Female"
+label values sex sexlbl
+label variable sex "Sex (RB090)"
 
 gen dag = RX010
 replace dag = PX010 if missing(dag)
@@ -79,8 +86,11 @@ label variable worker "Employee >= 7 months in income reference year, age 18-64"
 gen byte employed = (worker == 1)
 label variable employed "Worker (employee >= 7 months), used as filter in scripts 03/04"
 
-gen byte any_worker = (months_worked >= 7 & !missing(months_worked) & inrange(dag, 18, 64))
+* 18-64 with missing months stay missing (not counted as non-workers); outside 18-64 = 0
+gen byte any_worker = (months_worked >= 7) if !missing(months_worked) & inrange(dag, 18, 64)
+replace any_worker = 0 if !inrange(dag, 18, 64)
 label variable any_worker "Worked >= 7 months in any status, age 18-64"
+count if inrange(dag, 18, 64) & missing(months_worked)
 
 tab year employed if inrange(dag, 18, 64), missing
 tab employed any_worker if inrange(dag, 18, 64), missing
@@ -97,12 +107,12 @@ label variable oldage_ben "Receives old-age benefits (PY100G > 0)"
 tab year oldage_ben if inrange(dag, 18, 64) & any_worker == 0, missing
 
 ********************************************************************************
-* RX060: old SMD (2017-2020) vs. SMSD (2021-2024) - series break, kept as is
+* RX060 used as provided in the UDB (label changes 2021 from SMD to SMSD)
 * RX070: 3-digit code (hundreds = AROP, tens = SMD/SMSD, ones = LWI)
 ********************************************************************************
 
 gen byte smd = RX060 if inlist(RX060, 0, 1)
-label variable smd "Severe (material and social) deprivation, RX060 (break 2021)"
+label variable smd "Severe material and social deprivation (RX060, used as provided)"
 
 gen byte arope = (RX070 > 0) if !missing(RX070)
 label variable arope "AROPE, RX070 > 0"

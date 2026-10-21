@@ -1,0 +1,465 @@
+*******************************************************************************************************************************************************************************************
+*** Title: Deprivation items, household structure and robustness (IWP Employees vs. AROP w/o IWP)
+*** Aim: All calculations behind the deprivation statements of the paper (cf. SA2 presentation / working document)
+***   PART A: Setup - 13 SMSD items (+ 3 arrears sub-items), samples, survey design, helper program
+***   PART B: Descriptives - item prevalence by group (pp difference, relative change, ratio), by year
+***   PART C: Headline SMD effect - robustness ladder M1-M4 (M4 = "beyond income")
+***   PART D: Time pattern - SMD by year and group
+***   PART E: Item decomposition - effect of employment on each item (M1 and M4), Holm/Bonferroni-adjusted p-values
+***   PART F: Heterogeneity - group x household type / children (Wald tests, Holm-adjusted), AMEs by household type
+***   PART G: Household structure and poverty risk - children vs. adults (M1-M4), pre and post, per group; test children = adults
+*** Groups: smd_grp (script 03): 1 = IWP Employees, 0 = AROP w/o IWP; both 18-64, post-transfer, without old-age benefit recipients
+*** Outcome: smd = RX060 as provided in the UDB
+*** Survey design: svyset hh_cl [pw=dwt] (household cluster, idhh unique within year)
+*** Effects reported as OR and as average predicted shares (margins) with pp difference and relative change in %
+*** Input: SILC_All_Years_Adjusted.dta (script 03)
+*** Output: 05_Deprivation_log.txt, 05_Deprivation_Results.xlsx (one sheet per part)
+*** Requires: Stata 17 or newer
+*******************************************************************************************************************************************************************************************
+
+capture log close
+clear all
+set more off
+
+log using "Y:/Desktop/USB/SMSD_Paper/05_Deprivation_log.txt", text replace
+
+use "Y:/Desktop/USB/SMSD_Paper/SILC_All_Years_Adjusted.dta", clear
+
+
+*******************************************************************************************************************************************************************************************
+*** PART A: Setup
+*******************************************************************************************************************************************************************************************
+
+********************************************************************************
+* Destring item variables (imported as strings in script 01)
+********************************************************************************
+
+foreach var in HS011 HS021 HS031 HS040 HS050 HS060 HH050 HS110 HD080 PD020 PD030 PD050 PD060 PD070 PD080 {
+    capture confirm variable `var'
+    if _rc == 0 {
+        capture confirm string variable `var'
+        if _rc == 0 {
+            replace `var' = subinstr(`var', ",", ".", .)
+            destring `var', replace force
+        }
+    }
+    else {
+        gen double `var' = .
+        di as error "`var' not found, created as missing"
+    }
+}
+
+********************************************************************************
+* 13 SMSD items: 1 = lacking because cannot afford, 0 = has it / lacks for other reasons
+* Household items (7): HS060, HS040, arrears (HS011/HS021/HS031), HS050, HH050, HS110, HD080
+* Personal items (6): PD020, PD030, PD050, PD060, PD070, PD080
+********************************************************************************
+
+capture drop dep_*
+
+gen byte dep_unexpected = (HS060 == 2) if inlist(HS060, 1, 2)
+gen byte dep_holiday = (HS040 == 2) if inlist(HS040, 1, 2)
+gen byte dep_meal = (HS050 == 2) if inlist(HS050, 1, 2)
+gen byte dep_warm = (HH050 == 2) if inlist(HH050, 1, 2)
+gen byte dep_car = (HS110 == 2) if inlist(HS110, 1, 2, 3)
+gen byte dep_furniture = (HD080 == 2) if inlist(HD080, 1, 2, 3)
+
+* Arrears (composite): any arrears on rent/mortgage, utilities or loans; missing only if all three missing
+gen byte dep_arrears = (inlist(HS011, 1, 2) | inlist(HS021, 1, 2) | inlist(HS031, 1, 2)) if !missing(HS011) | !missing(HS021) | !missing(HS031)
+
+* Arrears sub-items (supplementary)
+gen byte dep_arr_rent = inlist(HS011, 1, 2) if inlist(HS011, 1, 2, 3)
+gen byte dep_arr_util = inlist(HS021, 1, 2) if inlist(HS021, 1, 2, 3)
+gen byte dep_arr_loan = inlist(HS031, 1, 2) if inlist(HS031, 1, 2, 3)
+
+gen byte dep_clothes = (PD020 == 2) if inlist(PD020, 1, 2, 3)
+gen byte dep_shoes = (PD030 == 2) if inlist(PD030, 1, 2, 3)
+gen byte dep_social = (PD050 == 2) if inlist(PD050, 1, 2, 3)
+gen byte dep_leisure = (PD060 == 2) if inlist(PD060, 1, 2, 3)
+gen byte dep_pocket = (PD070 == 2) if inlist(PD070, 1, 2, 3)
+gen byte dep_internet = (PD080 == 2) if inlist(PD080, 1, 2, 3)
+
+label variable dep_unexpected "Cannot face unexpected expenses (HS060)"
+label variable dep_holiday "Cannot afford one week holiday (HS040)"
+label variable dep_arrears "Arrears: rent/mortgage, utilities or loans (HS011/HS021/HS031)"
+label variable dep_meal "Cannot afford meal with meat/fish every 2nd day (HS050)"
+label variable dep_warm "Cannot keep home adequately warm (HH050)"
+label variable dep_car "Cannot afford a car (HS110)"
+label variable dep_furniture "Cannot replace worn-out furniture (HD080)"
+label variable dep_arr_rent "Arrears on rent/mortgage (HS011)"
+label variable dep_arr_util "Arrears on utility bills (HS021)"
+label variable dep_arr_loan "Arrears on loans/hire purchase (HS031)"
+label variable dep_clothes "Cannot replace worn-out clothes (PD020)"
+label variable dep_shoes "Cannot afford two pairs of shoes (PD030)"
+label variable dep_social "Cannot meet friends/family monthly (PD050)"
+label variable dep_leisure "Cannot regularly take part in leisure activity (PD060)"
+label variable dep_pocket "Cannot spend small amount on oneself (PD070)"
+label variable dep_internet "Cannot afford internet at home (PD080)"
+
+local items13 "dep_unexpected dep_holiday dep_arrears dep_meal dep_warm dep_car dep_furniture dep_clothes dep_shoes dep_social dep_leisure dep_pocket dep_internet"
+local items_arr "dep_arr_rent dep_arr_util dep_arr_loan"
+local outcomes "smd `items13' `items_arr'"
+
+* Number of lacking items (among non-missing items) - descriptive only
+egen dep_count = rowtotal(`items13')
+egen dep_valid = rownonmiss(`items13')
+replace dep_count = . if dep_valid < 13
+label variable dep_count "Number of SMSD items lacking (0-13, complete cases)"
+
+********************************************************************************
+* Samples
+********************************************************************************
+
+* Main sample: SMD comparison groups (script 03)
+capture drop s_main
+gen byte s_main = (!missing(smd_grp) & inrange(year, 2018, 2024))
+
+tab year smd_grp if s_main == 1, missing
+
+********************************************************************************
+* Survey design
+********************************************************************************
+
+capture drop hh_cl
+egen long hh_cl = group(year idhh)
+svyset hh_cl [pw=dwt], vce(linearized)
+
+********************************************************************************
+* Control specifications (headline ladder)
+* M1: year FE
+* M2: + age group, sex
+* M3: + household type
+* M4: + income position (% of threshold) -> "beyond income"
+********************************************************************************
+
+local c1 "i.year"
+local c2 "i.year i.age_grp i.sex"
+local c3 "i.year i.age_grp i.sex i.hh_type"
+local c4 "i.year i.age_grp i.sex i.hh_type c.inc_rel"
+
+********************************************************************************
+* Helper program: group effect of a binary group variable on a binary outcome
+* Returns OR (95% CI, p), average predicted shares per group, pp difference and relative change (with SE)
+********************************************************************************
+
+capture program drop grp_effect
+program define grp_effect, rclass
+    syntax varname, SAMPle(varname) GRoup(varname) [CONTRols(string)]
+    quietly svy, subpop(`sample'): logit `varlist' i.`group' `controls'
+    local b = _b[1.`group']
+    local se = _se[1.`group']
+    local df = e(df_r)
+    local n = e(N_sub)
+    local crit = invttail(`df', 0.025)
+    local or = exp(`b')
+    local or_lo = exp(`b' - `crit' * `se')
+    local or_hi = exp(`b' + `crit' * `se')
+    local p = 2 * ttail(`df', abs(`b' / `se'))
+    quietly margins `group', subpop(`sample') vce(unconditional) post
+    local s1 = 100 * _b[1.`group']
+    local s0 = 100 * _b[0bn.`group']
+    quietly lincom 100 * _b[1.`group'] - 100 * _b[0bn.`group']
+    local pp = r(estimate)
+    local pp_se = r(se)
+    quietly nlcom (rel: 100 * (_b[1.`group'] / _b[0bn.`group'] - 1))
+    tempname rb rV
+    matrix `rb' = r(b)
+    matrix `rV' = r(V)
+    local rel = `rb'[1, 1]
+    local rel_se = sqrt(`rV'[1, 1])
+    di as text %-16s "`varlist'" " OR " %6.3f `or' " [" %5.3f `or_lo' "; " %5.3f `or_hi' "] p=" %6.4f `p' " | IWP " %6.2f `s1' "% AxI " %6.2f `s0' "% | " %7.2f `pp' " pp (SE " %4.2f `pp_se' ") | " %7.1f `rel' " % (SE " %4.1f `rel_se' ") | N=" `n'
+    return scalar n = `n'
+    return scalar or = `or'
+    return scalar or_lo = `or_lo'
+    return scalar or_hi = `or_hi'
+    return scalar p = `p'
+    return scalar s_iwp = `s1'
+    return scalar s_axi = `s0'
+    return scalar pp = `pp'
+    return scalar pp_se = `pp_se'
+    return scalar rel = `rel'
+    return scalar rel_se = `rel_se'
+end
+
+* Results file for group effects (PART C, E)
+tempname ph
+tempfile res_effects
+postfile `ph' str12 part str16 outcome str80 spec double(n or or_lo or_hi p s_iwp s_axi pp pp_se rel rel_se) using `res_effects', replace
+
+
+*******************************************************************************************************************************************************************************************
+*** PART B: Descriptives - item prevalence by group (pooled 2018-2024, weighted)
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART B: Item prevalence by group ==================="
+
+tempname pd
+tempfile res_desc
+postfile `pd' str16 outcome double(n_iwp n_axi s_iwp s_axi pp rel ratio_axi_iwp) using `res_desc', replace
+
+foreach y of local outcomes {
+    quietly count if s_main == 1 & smd_grp == 1 & !missing(`y')
+    local n1 = r(N)
+    quietly count if s_main == 1 & smd_grp == 0 & !missing(`y')
+    local n0 = r(N)
+    quietly sum `y' [aw=dwt] if s_main == 1 & smd_grp == 1
+    local a = 100 * r(mean)
+    quietly sum `y' [aw=dwt] if s_main == 1 & smd_grp == 0
+    local b = 100 * r(mean)
+    post `pd' ("`y'") (`n1') (`n0') (`a') (`b') (`a' - `b') (100 * (`a' / `b' - 1)) (`b' / `a')
+    di as text %-16s "`y'" " IWP " %6.2f `a' "%  AxI " %6.2f `b' "%  diff " %7.2f (`a' - `b') " pp  rel " %7.1f (100 * (`a' / `b' - 1)) " %  ratio AxI/IWP " %5.2f (`b' / `a')
+}
+postclose `pd'
+
+*** Mean number of lacking items
+table smd_grp if s_main == 1 [aw=dwt], statistic(mean dep_count) statistic(p50 dep_count) nformat(%9.2f mean p50)
+
+*** Item prevalence by year and group
+foreach y of local outcomes {
+    di _n as result "--- `y' by year ---"
+    table year smd_grp if s_main == 1 [pw=dwt], statistic(mean `y') nformat(%9.4f mean)
+}
+
+
+*******************************************************************************************************************************************************************************************
+*** PART C: Headline SMD effect - robustness ladder (pooled 2018-2024)
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART C: Headline SMD effect, M1-M4 ==================="
+
+forvalues m = 1/4 {
+    di _n as result "--- M`m': `c`m'' ---"
+    grp_effect smd, sample(s_main) group(smd_grp) controls(`c`m'')
+    post `ph' ("C_headline") ("smd") ("M`m': `c`m''") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+}
+
+*** Full M4 model output (coefficients of controls)
+svy, subpop(s_main): logit smd i.smd_grp `c4', or
+
+
+*******************************************************************************************************************************************************************************************
+*** PART D: Time pattern - SMD by year and group (M1, no further controls)
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART D: SMD by year and group ==================="
+
+svy, subpop(s_main): logit smd i.smd_grp##i.year
+* Predicted SMD shares by year and group
+margins year#smd_grp, subpop(s_main) vce(unconditional)
+* Difference IWP Employees minus AROP w/o IWP by year (x100 = pp)
+margins year, dydx(smd_grp) subpop(s_main) vce(unconditional)
+* Does the gap change over time? (joint test of interaction terms)
+svy, subpop(s_main): logit smd i.smd_grp##i.year
+testparm i.smd_grp#i.year
+
+
+*******************************************************************************************************************************************************************************************
+*** PART E: Item decomposition - employment effect on each item (M1 and M4)
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART E: Item decomposition ==================="
+
+foreach m in 1 4 {
+    di _n as result "--- Items, M`m': `c`m'' ---"
+    foreach y in `items13' `items_arr' {
+        grp_effect `y', sample(s_main) group(smd_grp) controls(`c`m'')
+        post `ph' ("E_items") ("`y'") ("M`m'") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+    }
+}
+
+postclose `ph'
+
+
+*******************************************************************************************************************************************************************************************
+*** PART F: Heterogeneity - does the employment effect differ by household type / children?
+*** Interaction models on M4 controls; joint Wald test of the interaction terms
+***   F1: smd_grp x hh_type (9 household types)
+***   F2: smd_grp x has_kids (0 vs. 1+ children; robust to small cells)
+***   F3: smd_grp x n_ch_cat (0/1/2/3+ children)
+*** p-values Holm- and Bonferroni-adjusted across the 13 items (index tested separately)
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART F: Heterogeneity ==================="
+
+tempname pg
+tempfile res_het
+postfile `pg' str16 outcome double(p_hhtype p_haskids p_nchcat) using `res_het', replace
+
+foreach y in smd `items13' {
+
+    di _n as result "--- `y' ---"
+
+    quietly svy, subpop(s_main): logit `y' i.smd_grp##i.hh_type i.year i.age_grp i.sex c.inc_rel
+    quietly testparm i.smd_grp#i.hh_type
+    local p1 = r(p)
+
+    quietly svy, subpop(s_main): logit `y' i.smd_grp##i.has_kids c.n_adults i.year i.age_grp i.sex c.inc_rel
+    quietly testparm i.smd_grp#i.has_kids
+    local p2 = r(p)
+
+    quietly svy, subpop(s_main): logit `y' i.smd_grp##i.n_ch_cat c.n_adults i.year i.age_grp i.sex c.inc_rel
+    quietly testparm i.smd_grp#i.n_ch_cat
+    local p3 = r(p)
+
+    di as text %-16s "`y'" " p(group x hh_type) = " %6.4f `p1' "   p(group x has_kids) = " %6.4f `p2' "   p(group x n_children) = " %6.4f `p3'
+    post `pg' ("`y'") (`p1') (`p2') (`p3')
+
+    * Effect of employment by subgroup (x100 = pp, with 95% CI)
+    * Shown for the index (to quantify a null result: how large a difference can the CIs exclude?),
+    * for the food item (SA2 finding) and for every item with unadjusted p < 0.05 in the respective test
+    if "`y'" == "smd" | "`y'" == "dep_meal" | `p1' < 0.05 {
+        quietly svy, subpop(s_main): logit `y' i.smd_grp##i.hh_type i.year i.age_grp i.sex c.inc_rel
+        di _n as text "Employment effect by household type (dydx x100 = pp):"
+        margins hh_type, dydx(smd_grp) subpop(s_main) vce(unconditional)
+        di _n as text "Odds ratios by household type:"
+        forvalues h = 1/9 {
+            capture lincom _b[1.smd_grp] + _b[1.smd_grp#`h'.hh_type], or
+        }
+    }
+    if "`y'" == "smd" | "`y'" == "dep_meal" | `p2' < 0.05 {
+        quietly svy, subpop(s_main): logit `y' i.smd_grp##i.has_kids c.n_adults i.year i.age_grp i.sex c.inc_rel
+        di _n as text "Employment effect without / with children (dydx x100 = pp):"
+        margins has_kids, dydx(smd_grp) subpop(s_main) vce(unconditional)
+    }
+    if "`y'" == "smd" | "`y'" == "dep_meal" | `p3' < 0.05 {
+        quietly svy, subpop(s_main): logit `y' i.smd_grp##i.n_ch_cat c.n_adults i.year i.age_grp i.sex c.inc_rel
+        di _n as text "Employment effect by number of children (dydx x100 = pp):"
+        margins n_ch_cat, dydx(smd_grp) subpop(s_main) vce(unconditional)
+    }
+}
+postclose `pg'
+
+*** Cell sizes household type x group (check before interpreting)
+tab hh_type smd_grp if s_main == 1
+
+
+*******************************************************************************************************************************************************************************************
+*** PART G: Household structure and poverty risk - children vs. adults
+*** Outcomes: poverty pre and post within each group's base population (2018-2024, age 18-64)
+***   IWP Employees: base = employees >= 7 months (employed == 1); outcome iw_arop_pre_rel / iw_poor_post_rel
+***   AROP w/o IWP: base = not working >= 7 months in any status, 18-64; outcome axi_pre_rel / axi_post_rel
+*** Models: M1 children, M2 adults, M3 both, M4 both standardised; all with year FE
+*** Wald test children = adults in M3 and M4 (needed before claiming that one predictor dominates)
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART G: Children vs. adults ==================="
+
+capture drop base_iwp base_axi z_children z_adults
+gen byte base_iwp = (employed == 1 & inrange(year, 2018, 2024))
+gen byte base_axi = (any_worker == 0 & inrange(dag, 18, 64) & inrange(year, 2018, 2024))
+
+egen z_children = std(n_children) if inrange(dag, 18, 64) & inrange(year, 2018, 2024)
+egen z_adults = std(n_adults) if inrange(dag, 18, 64) & inrange(year, 2018, 2024)
+label variable z_children "Number of children (standardised, 18-64, 2018-2024)"
+label variable z_adults "Number of persons 14+ (standardised, 18-64, 2018-2024)"
+
+tempname phh
+tempfile res_hh
+postfile `phh' str16 outcome str4 model str12 predictor double(n or or_lo or_hi p) using `res_hh', replace
+
+foreach y in iw_arop_pre_rel iw_poor_post_rel axi_pre_rel axi_post_rel {
+
+    if inlist("`y'", "iw_arop_pre_rel", "iw_poor_post_rel") local base "base_iwp"
+    else local base "base_axi"
+
+    di _n as result "--- `y' (base: `base') ---"
+
+    local p1 "c.n_children"
+    local p2 "c.n_adults"
+    local p3 "c.n_children c.n_adults"
+    local p4 "c.z_children c.z_adults"
+
+    forvalues m = 1/4 {
+        svy, subpop(`base'): logit `y' `p`m'' i.year, or
+        local df = e(df_r)
+        local n = e(N_sub)
+        local crit = invttail(`df', 0.025)
+        foreach x in n_children n_adults z_children z_adults {
+            capture local b = _b[`x']
+            if _rc == 0 {
+                local se = _se[`x']
+                post `phh' ("`y'") ("M`m'") ("`x'") (`n') (exp(`b')) (exp(`b' - `crit' * `se')) (exp(`b' + `crit' * `se')) (2 * ttail(`df', abs(`b' / `se')))
+            }
+        }
+        * Test: is the children effect equal to the adults effect? (M3 per person, M4 per SD)
+        if `m' == 3 {
+            test n_children = n_adults
+            post `phh' ("`y'") ("M3") ("test ch=ad") (`n') (.) (.) (.) (r(p))
+        }
+        if `m' == 4 {
+            test z_children = z_adults
+            post `phh' ("`y'") ("M4") ("test ch=ad") (`n') (.) (.) (.) (r(p))
+        }
+        * AMEs (x100 = pp) for the joint unstandardised model
+        if `m' == 3 {
+            margins, dydx(n_children n_adults) subpop(`base') vce(unconditional)
+        }
+    }
+}
+postclose `phh'
+
+
+*******************************************************************************************************************************************************************************************
+*** Export results to Excel (one sheet per part), incl. Holm/Bonferroni adjustment
+*******************************************************************************************************************************************************************************************
+
+* B: descriptives
+use `res_desc', clear
+export excel using "Y:/Desktop/USB/SMSD_Paper/05_Deprivation_Results.xlsx", sheet("B_descriptives", replace) firstrow(variables)
+
+* C, E: group effects; Holm and Bonferroni across the 13 items within each item specification
+use `res_effects', clear
+gen byte main13 = (part == "E_items" & !inlist(outcome, "dep_arr_rent", "dep_arr_util", "dep_arr_loan"))
+gen double p_bonf = .
+gen double p_holm = .
+foreach m in M1 M4 {
+    preserve
+    keep if main13 == 1 & spec == "`m'"
+    local k = _N
+    sort p
+    gen double holm = (`k' - _n + 1) * p
+    replace holm = max(holm, holm[_n - 1]) if _n > 1
+    replace holm = min(holm, 1)
+    gen double bonf = min(`k' * p, 1)
+    keep outcome spec holm bonf
+    tempfile adj_`m'
+    save `adj_`m''
+    restore
+    merge 1:1 outcome spec using `adj_`m'', nogenerate update
+    replace p_holm = holm if !missing(holm)
+    replace p_bonf = bonf if !missing(bonf)
+    drop holm bonf
+}
+order part outcome spec n or or_lo or_hi p p_holm p_bonf s_iwp s_axi pp pp_se rel rel_se
+list part outcome spec or p p_holm s_iwp s_axi pp rel, noobs abbreviate(8) separator(0)
+export excel using "Y:/Desktop/USB/SMSD_Paper/05_Deprivation_Results.xlsx", sheet("CE_effects", replace) firstrow(variables)
+
+* F: heterogeneity tests; Holm and Bonferroni across the 13 items (index excluded)
+use `res_het', clear
+foreach t in hhtype haskids nchcat {
+    gen double p_`t'_bonf = .
+    gen double p_`t'_holm = .
+    * index (smd) sorted last, items by p-value
+    gen byte is_index = (outcome == "smd")
+    sort is_index p_`t'
+    quietly count if outcome != "smd"
+    local k = r(N)
+    gen long r_`t' = sum(outcome != "smd") if outcome != "smd"
+    replace p_`t'_bonf = min(`k' * p_`t', 1) if outcome != "smd"
+    replace p_`t'_holm = (`k' - r_`t' + 1) * p_`t' if outcome != "smd"
+    replace p_`t'_holm = max(p_`t'_holm, p_`t'_holm[_n - 1]) if outcome != "smd" & r_`t' > 1
+    replace p_`t'_holm = min(p_`t'_holm, 1) if outcome != "smd"
+    drop r_`t' is_index
+}
+order outcome p_hhtype p_hhtype_holm p_hhtype_bonf p_haskids p_haskids_holm p_haskids_bonf p_nchcat p_nchcat_holm p_nchcat_bonf
+list, noobs abbreviate(10) separator(0)
+export excel using "Y:/Desktop/USB/SMSD_Paper/05_Deprivation_Results.xlsx", sheet("F_heterogeneity", replace) firstrow(variables)
+
+* G: children vs. adults
+use `res_hh', clear
+list, noobs abbreviate(10) sepby(outcome)
+export excel using "Y:/Desktop/USB/SMSD_Paper/05_Deprivation_Results.xlsx", sheet("G_children_adults", replace) firstrow(variables)
+
+di as result "=== FERTIG ==="
+
+log close

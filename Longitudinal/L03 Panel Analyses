@@ -254,54 +254,79 @@ restore
 *** PART D: Persistence over four years
 *** Each release contributes persons observed in its last four years (release-3 ... release), weight RB064
 *** Persistent SMD (Eurostat logic): SMD in the last year and in at least 2 of the 3 preceding years
-*** SMSD exists from 2018 -> first usable window is release 2021 (2018-2021)
+*** SMSD exists from 2018 -> four-year windows from release 2021; three-year windows (RB063) as fallback
 *******************************************************************************************************************************************************************************************
 
 di _n(2) as result "=================== PART D: Persistence ==================="
 
 use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Prepared.dta", clear
 
-gen byte in_win = inrange(year, release - 3, release)
-bysort release pid: egen n_win = total(in_win & !missing(smd))
-bysort release pid: egen smd_years = total(in_win & smd == 1)
-bysort release pid: egen iwp_years = total(in_win & state == 1)
-bysort release pid: egen axi_years = total(in_win & state == 2)
+* SMSD is available from 2018 and, for 2018-2020, only for part of the persons (personal items released
+* only in the final year of a release) -> diagnostics first, then four-year (RB064) and three-year (RB063) windows
 
-keep if year == release & RB064 > 0 & !missing(RB064) & n_win == 4
-
-gen byte smd_prev = smd_years - smd
-gen byte persistent_smd = (smd == 1 & smd_prev >= 2) if !missing(smd)
-label variable persistent_smd "Persistent SMD (last year and >= 2 of 3 preceding years)"
-
-* Group history over the four years
-gen byte history = .
-replace history = 1 if iwp_years == 4
-replace history = 2 if axi_years == 4
-replace history = 3 if iwp_years > 0 & axi_years > 0
-replace history = 4 if missing(history) & (iwp_years > 0 | axi_years > 0)
-label define histlbl 1 "Always IWP (4/4)" 2 "Always AxI (4/4)" 3 "Both IWP and AxI" 4 "IWP or AxI in some years"
-label values history histlbl
-
-tab release
-
-*** Persistence and years in SMD by state in the last year
-table state if inlist(state, 1, 2) [aw=RB064], statistic(mean persistent_smd) statistic(mean smd_years) statistic(frequency) nformat(%9.4f mean)
-
-*** Persistence by group history over the four years
-table history [aw=RB064], statistic(mean persistent_smd) statistic(mean smd_years) statistic(frequency) nformat(%9.4f mean)
-
-*** IWP vs. AxI (state in last year): persistent SMD, pp difference and relative change
-capture drop g
-gen byte g = (state == 1) if inlist(state, 1, 2)
-tab g persistent_smd
-capture noisily logit persistent_smd i.g i.release [pw=RB064], vce(cluster pid)
-if _rc == 0 {
-    margins g, post
-    lincom 100 * _b[1.g] - 100 * _b[0bn.g]
-    nlcom (rel_change_pct: 100 * (_b[1.g] / _b[0bn.g] - 1))
+*** Diagnostics: persons in the final year of each release, by number of valid SMSD years in the last 3 / 4 years
+foreach w in 3 4 {
+    capture drop in_win`w' n_win`w'
+    gen byte in_win`w' = inrange(year, release - `w' + 1, release)
+    bysort release pid: egen n_win`w' = total(in_win`w' & !missing(smd))
 }
-else {
-    di as error "Persistence model not estimable (too few persons with four valid SMSD years)"
+tab release n_win4 if year == release & inrange(dag, 18, 64)
+tab release n_win3 if year == release & inrange(dag, 18, 64)
+tab release if year == release & RB064 > 0 & !missing(RB064)
+tab release if year == release & RB063 > 0 & !missing(RB063)
+
+tempfile prepared
+save `prepared'
+
+foreach w in 4 3 {
+    use `prepared', clear
+    di _n(2) as result "--- Persistence, `w'-year window (weight RB06`w') ---"
+
+    bysort release pid: egen smd_years = total(in_win`w' & smd == 1)
+    bysort release pid: egen iwp_years = total(in_win`w' & state == 1)
+    bysort release pid: egen axi_years = total(in_win`w' & state == 2)
+
+    keep if year == release & RB06`w' > 0 & !missing(RB06`w') & n_win`w' == `w'
+    count
+    if r(N) == 0 {
+        di as error "No persons with `w' valid SMSD years - window skipped"
+        continue
+    }
+
+    gen byte smd_prev = smd_years - smd
+    * 4 years: SMSD in the last year and in >= 2 of the 3 preceding years (Eurostat logic)
+    * 3 years: SMSD in the last year and in >= 1 of the 2 preceding years
+    if `w' == 4 gen byte persistent_smd = (smd == 1 & smd_prev >= 2) if !missing(smd)
+    if `w' == 3 gen byte persistent_smd = (smd == 1 & smd_prev >= 1) if !missing(smd)
+
+    gen byte history = .
+    replace history = 1 if iwp_years == `w'
+    replace history = 2 if axi_years == `w'
+    replace history = 3 if iwp_years > 0 & axi_years > 0
+    replace history = 4 if missing(history) & (iwp_years > 0 | axi_years > 0)
+    label define histlbl 1 "Always IWP" 2 "Always AxI" 3 "Both IWP and AxI" 4 "IWP or AxI in some years", replace
+    label values history histlbl
+
+    tab release
+
+    *** Persistence and years in SMD by state in the last year
+    capture noisily table state if inlist(state, 1, 2) [aw=RB06`w'], statistic(mean persistent_smd) statistic(mean smd_years) statistic(frequency) nformat(%9.4f mean)
+
+    *** Persistence by group history over the window
+    capture noisily table history [aw=RB06`w'], statistic(mean persistent_smd) statistic(mean smd_years) statistic(frequency) nformat(%9.4f mean)
+
+    *** IWP vs. AxI (state in last year): persistent SMD, pp difference and relative change
+    gen byte g = (state == 1) if inlist(state, 1, 2)
+    tab g persistent_smd
+    capture noisily logit persistent_smd i.g i.release [pw=RB06`w'], vce(cluster pid)
+    if _rc == 0 {
+        margins g, post
+        lincom 100 * _b[1.g] - 100 * _b[0bn.g]
+        nlcom (rel_change_pct: 100 * (_b[1.g] / _b[0bn.g] - 1))
+    }
+    else {
+        di as error "Persistence model (`w' years) not estimable"
+    }
 }
 
 di as result "=== FERTIG ==="

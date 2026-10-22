@@ -223,6 +223,13 @@ drop ecs_old ecs_new
 label define actlbl 1 "Employed (current)" 2 "Unemployed" 3 "Pupil/student/training" 4 "Retired/early retired" 5 "Disabled/unable to work" 6 "Domestic tasks/care" 7 "Other inactive" 9 "Missing"
 label values act_status actlbl
 
+* Education is (almost) time-invariant for adults: fill remaining gaps (e.g. 2020 for persons not in release 2020)
+* from the same person's nearest earlier, then later year
+sort idperson year release
+by idperson: replace educ3 = educ3[_n - 1] if educ3 == 9 & educ3[_n - 1] != 9 & _n > 1
+gsort idperson -year -release
+by idperson: replace educ3 = educ3[_n - 1] if educ3 == 9 & educ3[_n - 1] != 9 & _n > 1
+sort idperson year release
 tab year educ3 if inrange(dag, 18, 64), missing
 tab year health_bad if inrange(dag, 18, 64), missing
 tab year act_status if inrange(dag, 18, 64) & any_worker == 0 & oldage_ben == 0, missing

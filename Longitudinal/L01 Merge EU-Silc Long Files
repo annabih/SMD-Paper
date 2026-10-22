@@ -64,6 +64,36 @@ foreach rel of local releases {
     rename RB010 year_s
     rename RB040 idhh
     duplicates report idperson year_s
+    * A person can appear twice in a year in the R file: once in the household they left (RB110 = 5-7,
+    * moved out / died / left) and once as a current member of the new household (RB110 = 1-4).
+    * Keep the current-membership record; if still duplicated, keep the record with the highest base weight (RB060)
+    capture drop dup_n
+    bysort idperson year_s: gen dup_n = _N
+    capture confirm variable RB110
+    if _rc != 0 {
+        gen str1 RB110 = ""
+    }
+    gen byte rb110_n = real(RB110)
+    gen byte current_m = inrange(rb110_n, 1, 4)
+    di "Release `rel': duplicate person-year records in R file before cleaning:"
+    count if dup_n > 1
+    tab rb110_n if dup_n > 1, missing
+    bysort idperson year_s: egen any_current = max(current_m)
+    drop if dup_n > 1 & current_m == 0 & any_current == 1
+    drop dup_n
+    bysort idperson year_s: gen dup_n = _N
+    gen double rb050_n = .
+    foreach w in RB060 RB050 {
+        capture confirm variable `w'
+        if _rc == 0 {
+            replace rb050_n = real(subinstr(`w', ",", ".", .)) if missing(rb050_n)
+        }
+    }
+    gsort idperson year_s -rb050_n
+    by idperson year_s: keep if _n == 1 | dup_n == 1
+    drop dup_n rb110_n current_m any_current rb050_n
+    duplicates report idperson year_s
+    isid idperson year_s
     tempfile p_register
     save `p_register'
 
@@ -72,6 +102,9 @@ foreach rel of local releases {
     rename PB030 idperson
     rename PB010 year_s
     rename PX030 idhh_p
+    duplicates report idperson year_s
+    duplicates drop
+    isid idperson year_s
 
     * Merge personal files (keeps R-only persons such as children)
     merge 1:1 idperson year_s using `p_register'
@@ -111,6 +144,7 @@ foreach rel of local releases {
 }
 
 if `first' == 1 {
+    clear
     di as error "No release could be processed - check path .../EU-SILC/AT_LONG and file names UDB_lAT<yy>R.csv"
     exit 601
 }

@@ -1,7 +1,7 @@
 *******************************************************************************************************************************************************************************************
 *** Title: Prepare EU-SILC analysis file (MA-II logic on EU-SILC)
 *** Replaces: "Create pre post policy file"
-*** Aim: Destring, weights, age, worker definition (months in income reference year), old-age benefits, SMD (RX060), AROPE (RX070)
+*** Aim: Destring, weights, age, worker definition (months in income reference year), old-age benefits, SMSD (13 items, rebuilt), AROPE (RX070)
 *** Note: No policy scenario exists on EU-SILC, therefore no append and no scenario variable
 *** Input: SILC_CrossSec_All_Years.dta (from script 01)
 *** Output: SILC_All_Years_Prepared.dta
@@ -10,7 +10,10 @@
 ***     no emp_status (PL040/PL040A) condition: PL040 (2015-2020) is filled for anyone who ever worked,
 ***     PL040A (2021-2024) only for the currently employed -> not consistent across years
 ***   - any_worker = >= 7 months in any status (PL073-PL076), age 18-64 -> excluded from comparison group
-***   - RX060 used as provided in the UDB for all years
+***   - SMSD (smd) rebuilt from the 13 items for ALL years (>= 7 of 13 lacking, all 13 items valid), Eurostat definition:
+***     RX060 is old SMD (4 of 9 items) in 2017-2020 and SMSD (7 of 13) from 2021 -> series break.
+***     Test script "Test SMSD rebuilt vs RX060": 100 % agreement with RX060 2021-2024 (coding verified),
+***     ~98.6 % in 2018-2020. RX060 kept as smd_rx060 for robustness
 ***   - RX070 = 3-digit code (hundreds = AROP, tens = SMD/SMSD, ones = LWI); same break in 2021
 *******************************************************************************************************************************************************************************************
 clear all
@@ -23,7 +26,7 @@ use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/
 * Destring (decimal comma -> point); create empty variable if not available
 ********************************************************************************
 
-local numvars "HY020 HY022 HX050 HX090 HX080 RB050 RB090 RX010 PX010 PL073 PL074 PL075 PL076 PY100G RX060 RX070 DB100 PE040 PE041 PH010 PH030 PL031 PL032"
+local numvars "HY020 HY022 HX050 HX090 HX080 RB050 RB090 RX010 PX010 PL073 PL074 PL075 PL076 PY100G RX060 RX070 DB100 PE040 PE041 PH010 PH030 PL031 PL032 HS011 HS021 HS031 HS040 HS050 HS060 HH050 HS110 HD080 PD020 PD030 PD050 PD060 PD070 PD080"
 
 foreach var of local numvars {
     capture confirm variable `var'
@@ -107,12 +110,44 @@ label variable oldage_ben "Receives old-age benefits (PY100G > 0)"
 tab year oldage_ben if inrange(dag, 18, 64) & any_worker == 0, missing
 
 ********************************************************************************
-* RX060 used as provided in the UDB (label changes 2021 from SMD to SMSD)
+* SMSD and AROPE
 * RX070: 3-digit code (hundreds = AROP, tens = SMD/SMSD, ones = LWI)
 ********************************************************************************
 
-gen byte smd = RX060 if inlist(RX060, 0, 1)
-label variable smd "Severe material and social deprivation (RX060, used as provided)"
+* RX060 as provided (robustness only): old SMD 2017-2020, SMSD from 2021
+gen byte smd_rx060 = RX060 if inlist(RX060, 0, 1)
+label variable smd_rx060 "RX060 as provided (old SMD until 2020, SMSD from 2021)"
+
+* Main indicator: SMSD rebuilt from the 13 items, identical definition in all years
+* Household items (7): unexpected expenses HS060, holiday HS040, arrears HS011/HS021/HS031, meal HS050, warm home HH050,
+*   car HS110, furniture HD080; personal items (6, persons 16+): clothes PD020, shoes PD030, friends PD050, leisure PD060,
+*   pocket money PD070, internet PD080; 1 = lacking because cannot afford
+capture drop smi_*
+gen byte smi_unexpected = (HS060 == 2) if inlist(HS060, 1, 2)
+gen byte smi_holiday = (HS040 == 2) if inlist(HS040, 1, 2)
+gen byte smi_meal = (HS050 == 2) if inlist(HS050, 1, 2)
+gen byte smi_warm = (HH050 == 2) if inlist(HH050, 1, 2)
+gen byte smi_car = (HS110 == 2) if inlist(HS110, 1, 2, 3)
+gen byte smi_furniture = (HD080 == 2) if inlist(HD080, 1, 2, 3)
+gen byte smi_arrears = (inlist(HS011, 1, 2) | inlist(HS021, 1, 2) | inlist(HS031, 1, 2)) if !missing(HS011) | !missing(HS021) | !missing(HS031)
+gen byte smi_clothes = (PD020 == 2) if inlist(PD020, 1, 2, 3)
+gen byte smi_shoes = (PD030 == 2) if inlist(PD030, 1, 2, 3)
+gen byte smi_social = (PD050 == 2) if inlist(PD050, 1, 2, 3)
+gen byte smi_leisure = (PD060 == 2) if inlist(PD060, 1, 2, 3)
+gen byte smi_pocket = (PD070 == 2) if inlist(PD070, 1, 2, 3)
+gen byte smi_internet = (PD080 == 2) if inlist(PD080, 1, 2, 3)
+egen smsd_n = rowtotal(smi_*)
+egen smsd_valid = rownonmiss(smi_*)
+gen byte smd = (smsd_n >= 7) if smsd_valid == 13
+label variable smd "SMSD rebuilt from 13 items (>= 7 lacking, all 13 valid), all years"
+label variable smsd_n "Number of SMSD items lacking (0-13)"
+label variable smsd_valid "Number of valid SMSD items (0-13)"
+drop smi_*
+
+* Check: agreement with RX060 by year (2021-2024 should be 100 %)
+gen byte smd_agree = (smd == smd_rx060) if !missing(smd, smd_rx060)
+table year, statistic(mean smd_agree) statistic(count smd_agree) nformat(%9.4f mean)
+drop smd_agree
 
 gen byte arope = (RX070 > 0) if !missing(RX070)
 label variable arope "AROPE, RX070 > 0"

@@ -3,7 +3,7 @@
 *** Replaces: "Auswertungen"
 *** Aim: Compare IWP Employees with AROP w/o IWP
 ***   PART 0-4: income-based analyses, always pre- and post-transfer
-***   PART 5:   SMD (RX060, survey-based) - post-transfer groups only, no pre-transfer counterpart
+***   PART 5:   SMD (SMSD rebuilt from 13 items, survey-based) - post-transfer groups only, no pre-transfer counterpart
 ***   PART 6:   Composition of AROP w/o IWP by current economic status (PL031/PL032)
 *** Groups:
 ***   IWP Employees: >= 7 months as employee, age 18-64, below threshold (pre: iw_arop_pre_rel, post: iw_poor_post_rel)
@@ -154,7 +154,7 @@ foreach r in "" "_real" {
 
 
 *******************************************************************************************************************************************************************************************
-*** PART 5: Severe material and social deprivation (RX060) - IWP Employees vs. AROP w/o IWP
+*** PART 5: Severe material and social deprivation (SMSD rebuilt from 13 items, see Prepair script) - IWP Employees vs. AROP w/o IWP
 *** Post-transfer groups only (SMD is survey-based, no pre-transfer counterpart)
 *** Both 18-64, without old-age benefit recipients
 *******************************************************************************************************************************************************************************************

@@ -10,9 +10,9 @@
 ***   PART G: Household structure and poverty risk - children vs. adults (M1-M4), pre and post, per group; test children = adults
 ***   PART G2: Household structure and SMD - children vs. adults within IWP Employees and AROP w/o IWP (year FE; + income position), +1 effects in pp and %, group interaction tests
 ***   PART H: Sector within IWP Employees - IWP rate and SMD by sector (sector exists only for persons with a job)
-***   PART I: Robustness - AROP w/o IWP without students (R2) and unemployed only (R3); SMD M1/M5/M11/M12, items M1/M12
+***   PART I: Robustness - AROP w/o IWP without students (R2) and unemployed only (R3); SMD M1/M5/M11/M12 (rebuilt and RX060), items M1/M12
 *** Groups: smd_grp (script 03): 1 = IWP Employees, 0 = AROP w/o IWP; both 18-64, post-transfer, without old-age benefit recipients
-*** Outcome: smd = RX060 as provided in the UDB
+*** Outcome: smd = SMSD rebuilt from the 13 items for all years (Prepair script); RX060 as provided (smd_rx060) only as robustness (Part I)
 *** Survey design: svyset hh_cl [pw=dwt] (household cluster, idhh unique within year)
 *** Effects reported as OR and as average predicted shares (margins) with pp difference and relative change in %
 *** Input: SILC_All_Years_Adjusted.dta (script 03)
@@ -421,7 +421,7 @@ postclose `phh'
 *******************************************************************************************************************************************************************************************
 *** PART G2: Household structure and SMD - children vs. adults within the SMD comparison groups
 *** Sample: s_main (IWP Employees and AROP w/o IWP, 18-64, post-transfer, without old-age benefit recipients), 2018-2024
-*** Outcome: smd (RX060); no pre/post (SMD has no pre-transfer version)
+*** Outcome: smd (SMSD, 13 items rebuilt); no pre/post (SMD has no pre-transfer version)
 *** Variants: a = year FE only (total effect of household composition)
 ***           b = year FE + income position (inc_rel): do children raise SMD beyond their effect on equivalised income?
 *** Models per group: M1 children, M2 persons 14+, M3 both, M4 both standardised (as in Part G); Wald test children = adults
@@ -575,6 +575,12 @@ forvalues r = 1/3 {
         grp_effect smd, sample(s_r`r') group(smd_grp) controls(`c`m'')
         post `prb' ("R`r'") ("smd") ("M`m'") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
     }
+    * RX060 as provided (old SMD until 2020): does the indicator definition matter?
+    foreach m in 1 5 11 12 {
+        di _n as result "--- R`r' RX060 as provided, M`m': `c`m'' ---"
+        grp_effect smd_rx060, sample(s_r`r') group(smd_grp) controls(`c`m'')
+        post `prb' ("R`r'") ("smd_rx060") ("M`m'") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+    }
     foreach m in 1 12 {
         di _n as result "--- R`r' items, M`m' ---"
         foreach y of local items13 {
@@ -667,7 +673,7 @@ export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. 
 
 * I: robustness without students / unemployed only; Holm and Bonferroni across the 13 items within sample x model
 use `res_rob', clear
-gen byte item = (outcome != "smd")
+gen byte item = !inlist(outcome, "smd", "smd_rx060")
 gen double p_bonf = .
 gen double p_holm = .
 gen long ord = _n

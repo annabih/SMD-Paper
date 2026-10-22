@@ -8,7 +8,7 @@
 ***           Group = group in the FIRST year of the window (starting group), so durations are followed forward
 ***           C1 income poverty, 4 years (RB064) and 3 years (RB063): how many years poor among the ever-poor,
 ***              share still poor after 1, 2, 3 years (continuously) and in the last year, by starting group
-***           C2 where the starting groups are in each following year (IWP / AxI / not poor / other)
+***           C2 where the starting groups are in each following year, flows between years (alluvial) and complete paths
 ***           C3 SMSD, 3 years (RB063): the same for SMSD
 *** Groups (as in all cross-sectional analyses, age 18-64, post-transfer):
 ***   1 = IWP Employee, 2 = AROP w/o IWP (not working >= 7 months, without old-age benefits), 3 = not poor, 4 = other poor
@@ -152,11 +152,28 @@ foreach spec in "arop 4" "arop 3" "smd 3" {
     di _n as result "--- `o': affected in year 1 -> continuously affected up to year k, and affected in year k, by starting group ---"
     table g1 if y1 == 1 [aw=RB06`w'], statistic(mean cont2-cont`w') statistic(mean y2-y`w') statistic(frequency) nformat(%9.3f mean)
 
-    *** C2: Where are the starting groups in each later year?
+    *** C2: Where are the starting groups in each later year, and which paths do they take?
     if "`o'" == "arop" {
         forvalues k = 2/`w' {
             di _n as result "--- Group in year `k' by starting group (row %) ---"
             tab g1 g`k' [aw=RB06`w'] if inlist(g1, 1, 2), row nofreq
+        }
+        * Flows between consecutive years within each starting group (cell %, input for an alluvial diagram)
+        forvalues sg = 1/2 {
+            forvalues k = 1/`=`w'-1' {
+                local kp1 = `k' + 1
+                di _n as result "--- Starting group `sg': flows year `k' -> year `kp1' (cell % of the starting group) ---"
+                tab g`k' g`kp1' [aw=RB06`w'] if g1 == `sg', cell nofreq
+            }
+        }
+        * Complete paths over the window (I = IWP Employee, A = AROP w/o IWP, N = not poor, O = other poor)
+        gen str4 path = ""
+        forvalues k = 1/`w' {
+            replace path = path + cond(g`k' == 1, "I", cond(g`k' == 2, "A", cond(g`k' == 3, "N", "O")))
+        }
+        forvalues sg = 1/2 {
+            di _n as result "--- Starting group `sg': most frequent paths (weighted %) ---"
+            tab path [aw=RB06`w'] if g1 == `sg', sort
         }
     }
 }

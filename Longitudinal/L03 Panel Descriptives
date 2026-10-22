@@ -1,25 +1,21 @@
 *******************************************************************************************************************************************************************************************
-*** Title: Panel descriptives - dynamics of income poverty and severe material and social deprivation (EU-SILC longitudinal, Austria)
-*** Aim: Describe how persistent income poverty and SMSD are among IWP Employees and AROP w/o IWP (no causal models)
+*** Title: Panel descriptives - dynamics of income poverty (EU-SILC longitudinal, Austria)
+*** Aim: Describe how persistent income poverty is among IWP Employees and AROP w/o IWP (no causal models)
+***   SMSD is not analysed longitudinally: no persons with valid SMSD in all 4 years, and in 3-year windows only
+***   77 IWP Employees who stay poor (post) -> SMSD only in the cross-section
 ***   PART A: Panel structure - person-years by year and group, years observed per person
 ***   PART B: Year-to-year transitions (each release's last year pair, two-year weight RB062)
-***           B1 transition matrix between groups; B2 SMSD entry and exit rates by group
+***           B1 transition matrix between groups (post and pre), B1b by year pair
 ***   PART C: Following persons over the whole window (each release's last w years, persons observed in all w years)
 ***           Group = group in the FIRST year of the window (starting group), so durations are followed forward
 ***           C1 income poverty, 4 years (RB064) and 3 years (RB063): how many years poor among the ever-poor,
 ***              share still poor after 1, 2, 3 years (continuously) and in the last year, by starting group
 ***           C2 where the starting groups are in each following year, flows between years (alluvial) and complete paths
 ***           C1/C2 also with groups and poverty defined BEFORE social transfers (aroppre)
-***           C3 SMSD, 4 years (RB064) and 3 years (RB063): the same for SMSD, starting groups after (smd) and before
-***              transfers (smdpre); C4 SMSD dynamics among persons poor in ALL years (as in the cross-section):
-***              by starting group and strictly always in the same group; SMSD per year, duration, flows and paths
 *** Groups (as in all cross-sectional analyses, age 18-64, post-transfer):
 ***   1 = IWP Employee, 2 = AROP w/o IWP (not working >= 7 months, without old-age benefits), 3 = not poor, 4 = other poor
 *** Data notes:
 ***   - Income poverty: threshold from the cross-sectional pipeline, available 2018-2024 (no threshold before 2018)
-***   - SMSD rebuilt from 13 items, available from 2018; for 2018-2020 personal items are only released in the final year
-***     of a release -> filled across releases in L02; 4-year windows (persons with valid SMSD in all 4 years) plus
-***     3-year windows as a check with more cases
 ***   - All shares weighted with the release-specific longitudinal weights; comparisons IWP vs. AxI in pp and %
 *** Input: SILC_Long_Prepared.dta, SILC_Long_Panel.dta (L02)
 *** Output: L03_Panel_Descriptives_log.txt
@@ -44,9 +40,6 @@ keep if id_inconsistent == 0
 *** Person-years by year and group (18-64)
 tab year state if inrange(dag, 18, 64)
 
-*** Person-years with valid SMSD by year and group
-tab year state if inrange(dag, 18, 64) & !missing(smd)
-
 *** Years observed per person (18-64)
 bysort pid: egen n_years = total(inrange(dag, 18, 64))
 egen byte pid_tag = tag(pid)
@@ -68,7 +61,6 @@ di _n(2) as result "=================== PART B: Transitions ==================="
 use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Prepared.dta", clear
 
 bysort release pid (year): gen byte state_lag = state[_n - 1] if year[_n - 1] == year - 1
-bysort release pid (year): gen byte smd_lag = smd[_n - 1] if year[_n - 1] == year - 1
 keep if year == release & RB062 > 0 & !missing(RB062) & !missing(state, state_lag)
 tab release
 
@@ -87,7 +79,6 @@ tab state_pre_lag state_pre
 * back to the post-transfer transition file
 use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Prepared.dta", clear
 bysort release pid (year): gen byte state_lag = state[_n - 1] if year[_n - 1] == year - 1
-bysort release pid (year): gen byte smd_lag = smd[_n - 1] if year[_n - 1] == year - 1
 keep if year == release & RB062 > 0 & !missing(RB062) & !missing(state, state_lag)
 
 *** B1b: Transition matrix separately for each year pair (release - 1 -> release), row % and cell sizes
@@ -98,23 +89,11 @@ forvalues r = 2019/2023 {
     capture noisily tab state_lag state if release == `r'
 }
 
-*** B2: SMSD entry and exit rates by group in t
-* Entry: share with SMSD in t among those without SMSD in t-1; exit: share without SMSD in t among those with SMSD in t-1
-di _n as result "--- B2: SMSD entry rate (no SMSD in t-1 -> SMSD in t), by group in t ---"
-table state if smd_lag == 0 & !missing(smd) & inlist(state, 1, 2, 3) [aw=RB062], statistic(mean smd) statistic(frequency) nformat(%9.4f mean)
-di _n as result "--- B2: SMSD exit rate (SMSD in t-1 -> no SMSD in t), by group in t ---"
-gen byte smd_exit = (smd == 0) if smd_lag == 1 & !missing(smd)
-table state if inlist(state, 1, 2, 3) [aw=RB062], statistic(mean smd_exit) statistic(frequency) nformat(%9.4f mean)
-* Same by group in t-1 (does leaving / entering work change the exit rate?)
-table state_lag if inlist(state_lag, 1, 2, 3) [aw=RB062], statistic(mean smd_exit) statistic(frequency) nformat(%9.4f mean)
-
-
 *******************************************************************************************************************************************************************************************
 *** PART C: Following persons over the whole window
 *** Each release contributes persons observed in all years of its last w years (release-w+1 ... release), weight RB06w
 *** Starting group = group in the first year of the window (18-64); outcomes followed in years 2 ... w
 *** Income poverty: 2018-2024 -> 4-year windows (releases 2021-2023) and 3-year windows (releases 2020-2023)
-*** SMSD: from 2018 -> 4-year windows (releases 2021-2023) and 3-year windows (releases 2020-2023)
 *******************************************************************************************************************************************************************************************
 
 di _n(2) as result "=================== PART C: Following persons over the window ==================="
@@ -123,24 +102,16 @@ use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/
 tempfile prepared
 save `prepared'
 
-foreach spec in "arop 4" "aroppre 4" "arop 3" "aroppre 3" "smdpre 4" "smd 4" "smdpre 3" "smd 3" {
+foreach spec in "arop 4" "aroppre 4" "arop 3" "aroppre 3" {
     tokenize `spec'
     local o "`1'"
     local w = `2'
-    * Outcome and group variable: post (default), pre = before social transfers (income only), SMSD (post groups)
+    * Outcome and group variable: post (default), pre = before social transfers
     local gv "state"
     if "`o'" == "arop" local ov "arop_post_rel"
     if "`o'" == "aroppre" {
         local ov "arop_pre_rel"
         local gv "state_pre"
-    }
-    * SMSD: zv = income poverty used for the combined state (C4), matching the definition of the groups
-    local zv "arop_post_rel"
-    if "`o'" == "smd" local ov "smd"
-    if "`o'" == "smdpre" {
-        local ov "smd"
-        local gv "state_pre"
-        local zv "arop_pre_rel"
     }
 
     use `prepared', clear
@@ -150,16 +121,13 @@ foreach spec in "arop 4" "aroppre 4" "arop 3" "aroppre 3" "smdpre 4" "smd 4" "sm
     forvalues k = 1/`w' {
         bysort release pid: egen y`k' = max(cond(year == release - `w' + `k', `ov', .))
         bysort release pid: egen g`k' = max(cond(year == release - `w' + `k', `gv', .))
-        bysort release pid: egen z`k' = max(cond(year == release - `w' + `k', `zv', .))
     }
     * Explicit variable lists (y1-y`w' as a range would also include g1, g2, ... because of the variable order)
     local ylist ""
     local ylater ""
     local contlater ""
-    local zlist ""
     forvalues k = 1/`w' {
         local ylist "`ylist' y`k'"
-        local zlist "`zlist' z`k'"
         if `k' > 1 local ylater "`ylater' y`k'"
         if `k' > 1 local contlater "`contlater' cont`k'"
     }
@@ -232,52 +200,6 @@ foreach spec in "arop 4" "aroppre 4" "arop 3" "aroppre 3" "smdpre 4" "smd 4" "sm
         forvalues sg = 1/2 {
             di _n as result "--- Starting group `sg': most frequent paths (weighted %) ---"
             tab path [aw=RB06`w'] if g1 == `sg', sort
-        }
-    }
-
-    *** C4 (SMSD only): SMSD dynamics AMONG THE POOR, as in the cross-section (IWP Employees vs. AROP w/o IWP)
-    * Sample: starting group IWP Employee or AROP w/o IWP AND income poor in every year of the window
-    *   (a) by starting group (group may change within poverty, e.g. IWP -> AxI)
-    *   (b) strict: in the SAME group in every year (always IWP Employee vs. always AROP w/o IWP)
-    if inlist("`o'", "smd", "smdpre") {
-        egen n_zvalid = rownonmiss(`zlist')
-        egen n_poor = rowtotal(`zlist')
-        keep if n_zvalid == `w' & n_poor == `w' & inlist(g1, 1, 2)
-        gen byte same = 1
-        forvalues k = 2/`w' {
-            replace same = 0 if g`k' != g1
-        }
-        di _n as result "--- `o' C4: persons poor in all `w' years, by starting group; same = in the starting group in all years ---"
-        tab g1 same
-        * SMSD paths over the window (D = SMSD, 0 = no SMSD)
-        gen str4 dpath = ""
-        forvalues k = 1/`w' {
-            replace dpath = dpath + cond(y`k' == 1, "D", "0")
-        }
-        egen later = rowtotal(`ylater')
-        gen byte ever_later = (later > 0)
-        foreach v in a b {
-            local cnd "1"
-            if "`v'" == "b" local cnd "same == 1"
-            di _n(2) as result "===== `o' C4`v': always poor (`cnd') ====="
-            di _n as result "--- SMSD in each year, by starting group (share) ---"
-            table g1 if `cnd' [aw=RB06`w'], statistic(mean `ylist') statistic(frequency) nformat(%9.3f mean)
-            di _n as result "--- Years in SMSD (row %), mean years, always SMSD, number of SMSD spells ---"
-            tab g1 years [aw=RB06`w'] if `cnd', row nofreq
-            table g1 if `cnd' [aw=RB06`w'], statistic(mean years ever always spells) statistic(frequency) nformat(%9.3f mean)
-            di _n as result "--- SMSD in year 1 -> continuously SMSD up to year k, and SMSD in year k ---"
-            table g1 if `cnd' & y1 == 1 [aw=RB06`w'], statistic(mean `contlater') statistic(mean `ylater') statistic(frequency) nformat(%9.3f mean)
-            di _n as result "--- No SMSD in year 1 -> SMSD in at least one later year ---"
-            table g1 if `cnd' & y1 == 0 [aw=RB06`w'], statistic(mean ever_later) statistic(frequency) nformat(%9.3f mean)
-            forvalues sg = 1/2 {
-                forvalues k = 1/`=`w'-1' {
-                    local kp1 = `k' + 1
-                    di _n as result "--- C4`v' starting group `sg': SMSD flows year `k' -> year `kp1' (cell % of the group) ---"
-                    tab y`k' y`kp1' [aw=RB06`w'] if g1 == `sg' & `cnd', cell nofreq
-                }
-                di _n as result "--- C4`v' starting group `sg': SMSD paths (weighted %) ---"
-                tab dpath [aw=RB06`w'] if g1 == `sg' & `cnd', sort
-            }
         }
     }
 }

@@ -11,7 +11,8 @@
 ***           C2 where the starting groups are in each following year, flows between years (alluvial) and complete paths
 ***           C1/C2 also with groups and poverty defined BEFORE social transfers (aroppre)
 ***           C3 SMSD, 4 years (RB064) and 3 years (RB063): the same for SMSD, starting groups after (smd) and before
-***              transfers (smdpre); C4 combined state per year (income poor x SMSD): distribution, flows and paths
+***              transfers (smdpre); C4 SMSD dynamics among persons poor in ALL years (as in the cross-section):
+***              by starting group and strictly always in the same group; SMSD per year, duration, flows and paths
 *** Groups (as in all cross-sectional analyses, age 18-64, post-transfer):
 ***   1 = IWP Employee, 2 = AROP w/o IWP (not working >= 7 months, without old-age benefits), 3 = not poor, 4 = other poor
 *** Data notes:
@@ -234,45 +235,50 @@ foreach spec in "arop 4" "aroppre 4" "arop 3" "aroppre 3" "smdpre 4" "smd 4" "sm
         }
     }
 
-    *** C4 (SMSD only): combined state per year = income poverty x SMSD, followed by starting group
-    * 1 = poor + SMSD, 2 = poor without SMSD, 3 = not poor + SMSD, 4 = not poor without SMSD
+    *** C4 (SMSD only): SMSD dynamics AMONG THE POOR, as in the cross-section (IWP Employees vs. AROP w/o IWP)
+    * Sample: starting group IWP Employee or AROP w/o IWP AND income poor in every year of the window
+    *   (a) by starting group (group may change within poverty, e.g. IWP -> AxI)
+    *   (b) strict: in the SAME group in every year (always IWP Employee vs. always AROP w/o IWP)
     if inlist("`o'", "smd", "smdpre") {
         egen n_zvalid = rownonmiss(`zlist')
-        di _n as result "--- `o': persons without valid income poverty in all years (dropped for C4) ---"
-        count if n_zvalid < `w'
-        keep if n_zvalid == `w'
+        egen n_poor = rowtotal(`zlist')
+        keep if n_zvalid == `w' & n_poor == `w' & inlist(g1, 1, 2)
+        gen byte same = 1
+        forvalues k = 2/`w' {
+            replace same = 0 if g`k' != g1
+        }
+        di _n as result "--- `o' C4: persons poor in all `w' years, by starting group; same = in the starting group in all years ---"
+        tab g1 same
+        * SMSD paths over the window (D = SMSD, 0 = no SMSD)
+        gen str4 dpath = ""
         forvalues k = 1/`w' {
-            gen byte s`k' = cond(z`k' == 1 & y`k' == 1, 1, cond(z`k' == 1 & y`k' == 0, 2, cond(z`k' == 0 & y`k' == 1, 3, 4)))
+            replace dpath = dpath + cond(y`k' == 1, "D", "0")
         }
-        label define slbl 1 "poor+SMSD" 2 "poor, no SMSD" 3 "not poor+SMSD" 4 "not poor, no SMSD", replace
-        forvalues sg = 1/2 {
-            forvalues k = 1/`w' {
-                di _n as result "--- `o' C4: starting group `sg', combined state in year `k' (%) ---"
-                tab s`k' [aw=RB06`w'] if g1 == `sg'
-            }
-            forvalues k = 1/`=`w'-1' {
-                local kp1 = `k' + 1
-                di _n as result "--- `o' C4: starting group `sg', flows year `k' -> year `kp1' (cell % of the starting group) ---"
-                tab s`k' s`kp1' [aw=RB06`w'] if g1 == `sg', cell nofreq
-            }
-            * SMSD paths over the window (D = SMSD, 0 = no SMSD) and combined paths (P = poor+SMSD, p = poor only, D = SMSD only, n = neither)
-            gen str4 dpath`sg' = ""
-            gen str4 spath`sg' = ""
-            forvalues k = 1/`w' {
-                replace dpath`sg' = dpath`sg' + cond(y`k' == 1, "D", "0")
-                replace spath`sg' = spath`sg' + cond(s`k' == 1, "P", cond(s`k' == 2, "p", cond(s`k' == 3, "D", "n")))
-            }
-            di _n as result "--- `o' C4: starting group `sg', SMSD paths (weighted %) ---"
-            tab dpath`sg' [aw=RB06`w'] if g1 == `sg', sort
-            di _n as result "--- `o' C4: starting group `sg', combined paths (weighted %) ---"
-            tab spath`sg' [aw=RB06`w'] if g1 == `sg', sort
-            tab spath`sg' if g1 == `sg'
-        }
-        * SMSD among those NOT deprived in year 1: ever SMSD later, by starting group
-        di _n as result "--- `o': no SMSD in year 1 -> ever SMSD in a later year, by starting group ---"
         egen later = rowtotal(`ylater')
         gen byte ever_later = (later > 0)
-        table g1 if y1 == 0 & inlist(g1, 1, 2, 3) [aw=RB06`w'], statistic(mean ever_later) statistic(frequency) nformat(%9.3f mean)
+        foreach v in a b {
+            local cnd "1"
+            if "`v'" == "b" local cnd "same == 1"
+            di _n(2) as result "===== `o' C4`v': always poor (`cnd') ====="
+            di _n as result "--- SMSD in each year, by starting group (share) ---"
+            table g1 if `cnd' [aw=RB06`w'], statistic(mean `ylist') statistic(frequency) nformat(%9.3f mean)
+            di _n as result "--- Years in SMSD (row %), mean years, always SMSD, number of SMSD spells ---"
+            tab g1 years [aw=RB06`w'] if `cnd', row nofreq
+            table g1 if `cnd' [aw=RB06`w'], statistic(mean years ever always spells) statistic(frequency) nformat(%9.3f mean)
+            di _n as result "--- SMSD in year 1 -> continuously SMSD up to year k, and SMSD in year k ---"
+            table g1 if `cnd' & y1 == 1 [aw=RB06`w'], statistic(mean `contlater') statistic(mean `ylater') statistic(frequency) nformat(%9.3f mean)
+            di _n as result "--- No SMSD in year 1 -> SMSD in at least one later year ---"
+            table g1 if `cnd' & y1 == 0 [aw=RB06`w'], statistic(mean ever_later) statistic(frequency) nformat(%9.3f mean)
+            forvalues sg = 1/2 {
+                forvalues k = 1/`=`w'-1' {
+                    local kp1 = `k' + 1
+                    di _n as result "--- C4`v' starting group `sg': SMSD flows year `k' -> year `kp1' (cell % of the group) ---"
+                    tab y`k' y`kp1' [aw=RB06`w'] if g1 == `sg' & `cnd', cell nofreq
+                }
+                di _n as result "--- C4`v' starting group `sg': SMSD paths (weighted %) ---"
+                tab dpath [aw=RB06`w'] if g1 == `sg' & `cnd', sort
+            }
+        }
     }
 }
 

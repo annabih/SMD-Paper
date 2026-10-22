@@ -9,7 +9,8 @@
 ***           C1 income poverty, 4 years (RB064) and 3 years (RB063): how many years poor among the ever-poor,
 ***              share still poor after 1, 2, 3 years (continuously) and in the last year, by starting group
 ***           C2 where the starting groups are in each following year, flows between years (alluvial) and complete paths
-***           C3 SMSD, 3 years (RB063): the same for SMSD
+***           C1/C2 also with groups and poverty defined BEFORE social transfers (aroppre)
+***           C3 SMSD, 3 years (RB063): the same for SMSD (post-transfer groups only)
 *** Groups (as in all cross-sectional analyses, age 18-64, post-transfer):
 ***   1 = IWP Employee, 2 = AROP w/o IWP (not working >= 7 months, without old-age benefits), 3 = not poor, 4 = other poor
 *** Data notes:
@@ -72,6 +73,20 @@ tab release
 tab state_lag state [aw=RB062], row nofreq
 tab state_lag state
 
+*** B1 pre: Transition matrix with groups defined BEFORE social transfers (same persons, same weight)
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Prepared.dta", clear
+bysort release pid (year): gen byte state_pre_lag = state_pre[_n - 1] if year[_n - 1] == year - 1
+keep if year == release & RB062 > 0 & !missing(RB062) & !missing(state_pre, state_pre_lag)
+di _n as result "--- B1 pre: transition matrix, groups before social transfers (row %) ---"
+tab state_pre_lag state_pre [aw=RB062], row nofreq
+tab state_pre_lag state_pre
+
+* back to the post-transfer transition file
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Prepared.dta", clear
+bysort release pid (year): gen byte state_lag = state[_n - 1] if year[_n - 1] == year - 1
+bysort release pid (year): gen byte smd_lag = smd[_n - 1] if year[_n - 1] == year - 1
+keep if year == release & RB062 > 0 & !missing(RB062) & !missing(state, state_lag)
+
 *** B1b: Transition matrix separately for each year pair (release - 1 -> release), row % and cell sizes
 forvalues r = 2019/2023 {
     local r0 = `r' - 1
@@ -105,11 +120,17 @@ use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/
 tempfile prepared
 save `prepared'
 
-foreach spec in "arop 4" "arop 3" "smd 3" {
+foreach spec in "arop 4" "aroppre 4" "arop 3" "aroppre 3" "smd 3" {
     tokenize `spec'
     local o "`1'"
     local w = `2'
+    * Outcome and group variable: post (default), pre = before social transfers (income only), SMSD (post groups)
+    local gv "state"
     if "`o'" == "arop" local ov "arop_post_rel"
+    if "`o'" == "aroppre" {
+        local ov "arop_pre_rel"
+        local gv "state_pre"
+    }
     if "`o'" == "smd" local ov "smd"
 
     use `prepared', clear
@@ -118,7 +139,7 @@ foreach spec in "arop 4" "arop 3" "smd 3" {
     * Outcome and group in each year k = 1 ... w of the window (k = 1: first year)
     forvalues k = 1/`w' {
         bysort release pid: egen y`k' = max(cond(year == release - `w' + `k', `ov', .))
-        bysort release pid: egen g`k' = max(cond(year == release - `w' + `k', state, .))
+        bysort release pid: egen g`k' = max(cond(year == release - `w' + `k', `gv', .))
     }
     * Explicit variable lists (y1-y`w' as a range would also include g1, g2, ... because of the variable order)
     local ylist ""
@@ -170,7 +191,7 @@ foreach spec in "arop 4" "arop 3" "smd 3" {
     table g1 if y1 == 1 [aw=RB06`w'], statistic(mean `contlater') statistic(mean `ylater') statistic(frequency) nformat(%9.3f mean)
 
     *** C2: Where are the starting groups in each later year, and which paths do they take?
-    if "`o'" == "arop" {
+    if inlist("`o'", "arop", "aroppre") {
         forvalues k = 2/`w' {
             di _n as result "--- Group in year `k' by starting group (row %) ---"
             tab g1 g`k' [aw=RB06`w'] if inlist(g1, 1, 2), row nofreq

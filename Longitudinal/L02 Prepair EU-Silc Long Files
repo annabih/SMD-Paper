@@ -318,6 +318,16 @@ replace state = 4 if arop_post_rel == 1 & missing(smd_grp) & inrange(dag, 18, 64
 label define statelbl 1 "IWP Employee" 2 "AROP w/o IWP" 3 "Not poor" 4 "Other poor"
 label values state statelbl
 
+* Same groups before social transfers (pre = HY022 / HX050, same threshold): income dynamics pre and post
+gen byte state_pre = .
+replace state_pre = 1 if employed == 1 & arop_pre_rel == 1 & oldage_ben == 0
+replace state_pre = 2 if any_worker == 0 & arop_pre_rel == 1 & inrange(dag, 18, 64) & oldage_ben == 0
+replace state_pre = 3 if arop_pre_rel == 0 & inrange(dag, 18, 64)
+replace state_pre = 4 if arop_pre_rel == 1 & missing(state_pre) & inrange(dag, 18, 64)
+label values state_pre statelbl
+label variable state_pre "Group before social transfers (pre-transfer income)"
+tab year state_pre, missing
+
 tab year state, missing
 
 save "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Prepared.dta", replace

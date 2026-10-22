@@ -112,7 +112,16 @@ foreach spec in "arop 4" "arop 3" "smd 3" {
         bysort release pid: egen y`k' = max(cond(year == release - `w' + `k', `ov', .))
         bysort release pid: egen g`k' = max(cond(year == release - `w' + `k', state, .))
     }
-    egen n_valid = rownonmiss(y1-y`w')
+    * Explicit variable lists (y1-y`w' as a range would also include g1, g2, ... because of the variable order)
+    local ylist ""
+    local ylater ""
+    local contlater ""
+    forvalues k = 1/`w' {
+        local ylist "`ylist' y`k'"
+        if `k' > 1 local ylater "`ylater' y`k'"
+        if `k' > 1 local contlater "`contlater' cont`k'"
+    }
+    egen n_valid = rownonmiss(`ylist')
     keep if year == release & RB06`w' > 0 & !missing(RB06`w') & n_valid == `w' & inlist(g1, 1, 2, 3, 4)
     count
     if r(N) == 0 {
@@ -122,7 +131,7 @@ foreach spec in "arop 4" "arop 3" "smd 3" {
     tab release
     label values g1 statelbl
 
-    egen years = rowtotal(y1-y`w')
+    egen years = rowtotal(`ylist')
     gen byte ever = (years > 0)
     gen byte always = (years == `w')
     * Continuously in the outcome from year 1 (survival): still after 1, 2, 3 further years
@@ -150,7 +159,7 @@ foreach spec in "arop 4" "arop 3" "smd 3" {
 
     *** C1b: Those affected in the first year: share still affected (continuously) and affected in each later year
     di _n as result "--- `o': affected in year 1 -> continuously affected up to year k, and affected in year k, by starting group ---"
-    table g1 if y1 == 1 [aw=RB06`w'], statistic(mean cont2-cont`w') statistic(mean y2-y`w') statistic(frequency) nformat(%9.3f mean)
+    table g1 if y1 == 1 [aw=RB06`w'], statistic(mean `contlater') statistic(mean `ylater') statistic(frequency) nformat(%9.3f mean)
 
     *** C2: Where are the starting groups in each later year, and which paths do they take?
     if "`o'" == "arop" {

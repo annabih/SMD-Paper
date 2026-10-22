@@ -1,0 +1,200 @@
+*******************************************************************************************************************************************************************************************
+*** Title: Panel descriptives - dynamics of income poverty and severe material and social deprivation (EU-SILC longitudinal, Austria)
+*** Aim: Describe how persistent income poverty and SMSD are among IWP Employees and AROP w/o IWP (no causal models)
+***   PART A: Panel structure - person-years by year and group, years observed per person
+***   PART B: Year-to-year transitions (each release's last year pair, two-year weight RB062)
+***           B1 transition matrix between groups; B2 SMSD entry and exit rates by group
+***   PART C: Persistence over several years (each release's last w years)
+***           C1 income poverty over 4 years (RB064) and 3 years (RB063): years poor, ever / always / persistently poor
+***           C2 group stability: years as IWP Employee / AROP w/o IWP, group in the first year of the window
+***           C3 SMSD over 3 years (RB063): years in SMSD, ever / always / persistent SMSD, share of the deprived already deprived before
+*** Groups (as in all cross-sectional analyses, age 18-64, post-transfer):
+***   1 = IWP Employee, 2 = AROP w/o IWP (not working >= 7 months, without old-age benefits), 3 = not poor, 4 = other poor
+*** Data notes:
+***   - Income poverty: threshold from the cross-sectional pipeline, available 2018-2024 (no threshold before 2018)
+***   - SMSD rebuilt from 13 items, available from 2018; for 2018-2020 personal items are only released in the final year
+***     of a release -> partly missing, therefore 3-year windows for SMSD
+***   - All shares weighted with the release-specific longitudinal weights; comparisons IWP vs. AxI in pp and %
+*** Input: SILC_Long_Prepared.dta, SILC_Long_Panel.dta (L02)
+*** Output: L03_Panel_Descriptives_log.txt
+*******************************************************************************************************************************************************************************************
+
+capture log close
+clear all
+set more off
+
+log using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/L03_Panel_Descriptives_log.txt", text replace
+
+
+*******************************************************************************************************************************************************************************************
+*** PART A: Panel structure
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART A: Panel structure ==================="
+
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Panel.dta", clear
+keep if id_inconsistent == 0
+
+*** Person-years by year and group (18-64)
+tab year state if inrange(dag, 18, 64)
+
+*** Person-years with valid SMSD by year and group
+tab year state if inrange(dag, 18, 64) & !missing(smd)
+
+*** Years observed per person (18-64)
+bysort pid: egen n_years = total(inrange(dag, 18, 64))
+egen byte pid_tag = tag(pid)
+tab n_years if pid_tag == 1 & n_years > 0
+
+*** Persons ever IWP Employee, ever AROP w/o IWP, and both
+bysort pid: egen ever_iwp = max(state == 1)
+bysort pid: egen ever_axi = max(state == 2)
+tab ever_iwp ever_axi if pid_tag == 1
+
+
+*******************************************************************************************************************************************************************************************
+*** PART B: Year-to-year transitions t-1 -> t
+*** Each release contributes its last year pair (release - 1 -> release), weighted with its two-year weight RB062
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART B: Transitions ==================="
+
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Prepared.dta", clear
+
+bysort release pid (year): gen byte state_lag = state[_n - 1] if year[_n - 1] == year - 1
+bysort release pid (year): gen byte smd_lag = smd[_n - 1] if year[_n - 1] == year - 1
+keep if year == release & RB062 > 0 & !missing(RB062) & !missing(state, state_lag)
+tab release
+
+*** B1: Transition matrix (row %: where do persons in group t-1 end up in t?) and cell sizes
+tab state_lag state [aw=RB062], row nofreq
+tab state_lag state
+
+*** B2: SMSD entry and exit rates by group in t
+* Entry: share with SMSD in t among those without SMSD in t-1; exit: share without SMSD in t among those with SMSD in t-1
+di _n as result "--- B2: SMSD entry rate (no SMSD in t-1 -> SMSD in t), by group in t ---"
+table state if smd_lag == 0 & !missing(smd) & inlist(state, 1, 2, 3) [aw=RB062], statistic(mean smd) statistic(frequency) nformat(%9.4f mean)
+di _n as result "--- B2: SMSD exit rate (SMSD in t-1 -> no SMSD in t), by group in t ---"
+gen byte smd_exit = (smd == 0) if smd_lag == 1 & !missing(smd)
+table state if inlist(state, 1, 2, 3) [aw=RB062], statistic(mean smd_exit) statistic(frequency) nformat(%9.4f mean)
+* Same by group in t-1 (does leaving / entering work change the exit rate?)
+table state_lag if inlist(state_lag, 1, 2, 3) [aw=RB062], statistic(mean smd_exit) statistic(frequency) nformat(%9.4f mean)
+
+
+*******************************************************************************************************************************************************************************************
+*** PART C: Persistence - how many are persistently income-poor / deprived?
+*** Each release contributes persons observed in all years of its last w years (release-w+1 ... release), weight RB06w
+*** Group (IWP Employee / AROP w/o IWP / not poor) = state in the last year of the window, age 18-64
+*** Persistent (Eurostat logic): poor / deprived in the last year and in >= 2 of 3 (w = 4) or >= 1 of 2 (w = 3) preceding years
+*** Income poverty is available 2018-2024 -> 4-year windows from release 2021; SMSD only from 2018 with gaps -> 3-year windows
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART C: Persistence ==================="
+
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Prepared.dta", clear
+tempfile prepared
+save `prepared'
+
+*** C1 / C2: income poverty (post-transfer) and group stability, 4- and 3-year windows
+foreach w in 4 3 {
+    use `prepared', clear
+    di _n(2) as result "--- C1/C2: income poverty, `w'-year window (weight RB06`w') ---"
+    gen byte in_win = inrange(year, release - `w' + 1, release)
+    bysort release pid: egen n_obs = total(in_win & !missing(arop_post_rel))
+    bysort release pid: egen pov_years = total(in_win & arop_post_rel == 1)
+    bysort release pid: egen iwp_years = total(in_win & state == 1)
+    bysort release pid: egen axi_years = total(in_win & state == 2)
+    keep if year == release & RB06`w' > 0 & !missing(RB06`w') & n_obs == `w' & inrange(dag, 18, 64) & inlist(state, 1, 2, 3)
+    count
+    if r(N) == 0 {
+        di as error "No persons with `w' years of income data - window skipped"
+        continue
+    }
+    tab release
+    gen byte pov_prev = pov_years - arop_post_rel
+    if `w' == 4 gen byte persistent_arop = (arop_post_rel == 1 & pov_prev >= 2)
+    if `w' == 3 gen byte persistent_arop = (arop_post_rel == 1 & pov_prev >= 1)
+    gen byte ever_poor = (pov_years > 0)
+    gen byte always_poor = (pov_years == `w')
+
+    * Number of years poor (row %), by group in the last year and for all 18-64
+    di _n as result "Years income-poor in the last `w' years (row %), by group in the last year"
+    tab state pov_years [aw=RB06`w'], row nofreq
+    tab pov_years [aw=RB06`w']
+    tab state pov_years
+    * Persistent / ever / always poor by group; persistent poverty among all 18-64
+    table state [aw=RB06`w'], statistic(mean persistent_arop ever_poor always_poor) statistic(frequency) nformat(%9.4f mean)
+    * Share of the currently poor who were poor before (persistence among the poor)
+    table state if arop_post_rel == 1 [aw=RB06`w'], statistic(mean persistent_arop) nformat(%9.4f mean)
+
+    * C2: group stability - years in the same group, among IWP Employees and AROP w/o IWP in the last year
+    di _n as result "Years as IWP Employee (IWP in the last year) and years as AROP w/o IWP (AxI in the last year), row %"
+    tab iwp_years [aw=RB06`w'] if state == 1
+    tab axi_years [aw=RB06`w'] if state == 2
+    * Where were they in the first year of the window?
+    di _n as result "State in the first year of the window, by state in the last year (row %)"
+    preserve
+    use `prepared', clear
+    keep if year == release - `w' + 1
+    keep release pid state
+    rename state state_first
+    tempfile first
+    save `first'
+    restore
+    merge 1:1 release pid using `first', keep(master match) nogenerate
+    tab state state_first [aw=RB06`w'] if inlist(state, 1, 2), row nofreq
+    tab state state_first if inlist(state, 1, 2)
+
+    * IWP vs. AxI: persistent poverty, pp difference and relative change
+    capture drop g
+    gen byte g = (state == 1) if inlist(state, 1, 2)
+    capture noisily logit persistent_arop i.g i.release [pw=RB06`w'] if arop_post_rel == 1, vce(cluster pid)
+    if _rc == 0 {
+        margins g, post
+        lincom 100 * _b[1.g] - 100 * _b[0bn.g]
+        nlcom (rel_change_pct: 100 * (_b[1.g] / _b[0bn.g] - 1))
+    }
+}
+
+*** C3: SMSD over 3 years (RB063) - SMSD from 2018, personal items partly missing 2018-2020
+use `prepared', clear
+di _n(2) as result "--- C3: SMSD, 3-year window (weight RB063) ---"
+gen byte in_win = inrange(year, release - 2, release)
+bysort release pid: egen n_smd = total(in_win & !missing(smd))
+bysort release pid: egen smd_years = total(in_win & smd == 1)
+bysort release pid: egen pov_years = total(in_win & arop_post_rel == 1)
+keep if year == release & RB063 > 0 & !missing(RB063) & n_smd == 3 & inrange(dag, 18, 64) & inlist(state, 1, 2, 3)
+count
+tab release
+gen byte smd_prev = smd_years - smd
+gen byte persistent_smd = (smd == 1 & smd_prev >= 1)
+gen byte ever_smd = (smd_years > 0)
+gen byte always_smd = (smd_years == 3)
+gen byte always_poor = (pov_years == 3)
+
+* Number of years in SMSD (row %), by group in the last year
+tab state smd_years [aw=RB063], row nofreq
+tab state smd_years
+* Current, ever, persistent, always SMSD by group
+table state [aw=RB063], statistic(mean smd ever_smd persistent_smd always_smd) statistic(frequency) nformat(%9.4f mean)
+* Among the currently deprived: share already deprived in at least one of the two preceding years
+table state if smd == 1 [aw=RB063], statistic(mean persistent_smd) statistic(frequency) nformat(%9.4f mean)
+* Among the persistently income-poor (poor in all 3 years): SMSD over the window
+table state if always_poor == 1 [aw=RB063], statistic(mean smd ever_smd persistent_smd) statistic(frequency) nformat(%9.4f mean)
+
+* IWP vs. AxI: ever and persistent SMSD, pp difference and relative change
+capture drop g
+gen byte g = (state == 1) if inlist(state, 1, 2)
+foreach y in ever_smd persistent_smd {
+    di _n as result "--- IWP vs. AxI: `y' ---"
+    capture noisily logit `y' i.g i.release [pw=RB063], vce(cluster pid)
+    if _rc == 0 {
+        margins g, post
+        lincom 100 * _b[1.g] - 100 * _b[0bn.g]
+        nlcom (rel_change_pct: 100 * (_b[1.g] / _b[0bn.g] - 1))
+    }
+}
+
+di as result "=== FERTIG ==="
+
+log close

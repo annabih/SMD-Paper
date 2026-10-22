@@ -23,7 +23,7 @@ use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/
 * Destring (decimal comma -> point); create empty variable if not available
 ********************************************************************************
 
-local numvars "HY020 HY022 HX050 HX090 HX080 RB050 RB090 RX010 PX010 PL073 PL074 PL075 PL076 PY100G RX060 RX070 DB100 PE040 PE041 PH010 PH030"
+local numvars "HY020 HY022 HX050 HX090 HX080 RB050 RB090 RX010 PX010 PL073 PL074 PL075 PL076 PY100G RX060 RX070 DB100 PE040 PE041 PH010 PH030 PL031 PL032"
 
 foreach var of local numvars {
     capture confirm variable `var'
@@ -220,11 +220,35 @@ label define sectorlbl 1 "A Agriculture" 2 "B-E Industry" 3 "F Construction" 4 "
 label values sector sectorlbl
 label variable sector "Sector of main job (NACE, PL111/PL111A)"
 
+* Self-defined current economic status, harmonised: PL031 (until 2020, 11 categories), PL032 (from 2021, 8 categories)
+* Used to describe the composition of AROP w/o IWP (who are the non-working poor?)
+* 1 = employed (current status; < 7 months in income reference year), 2 = unemployed, 3 = pupil/student/training,
+* 4 = retired / early retired, 5 = permanently disabled / unable to work (health), 6 = domestic tasks / care, 7 = other (incl. military/civil service), 9 = missing
+gen byte act_status = 9
+replace act_status = 1 if year <= 2020 & inlist(PL031, 1, 2, 3, 4)
+replace act_status = 2 if year <= 2020 & PL031 == 5
+replace act_status = 3 if year <= 2020 & PL031 == 6
+replace act_status = 4 if year <= 2020 & PL031 == 7
+replace act_status = 5 if year <= 2020 & PL031 == 8
+replace act_status = 6 if year <= 2020 & PL031 == 10
+replace act_status = 7 if year <= 2020 & inlist(PL031, 9, 11)
+replace act_status = 1 if year >= 2021 & PL032 == 1
+replace act_status = 2 if year >= 2021 & PL032 == 2
+replace act_status = 3 if year >= 2021 & PL032 == 5
+replace act_status = 4 if year >= 2021 & PL032 == 3
+replace act_status = 5 if year >= 2021 & PL032 == 4
+replace act_status = 6 if year >= 2021 & PL032 == 6
+replace act_status = 7 if year >= 2021 & inlist(PL032, 7, 8)
+label define actlbl 1 "Employed (current)" 2 "Unemployed" 3 "Pupil/student/training" 4 "Retired/early retired" 5 "Disabled/unable to work" 6 "Domestic tasks/care" 7 "Other inactive" 9 "Missing"
+label values act_status actlbl
+label variable act_status "Current economic status, harmonised (PL031/PL032)"
+
 tab year educ3 if inrange(dag, 18, 64), missing
 tab year region, missing
 tab year urban, missing
 tab year health_bad if inrange(dag, 18, 64), missing
 tab year limit if inrange(dag, 18, 64), missing
 tab year sector if employed == 1, missing
+tab year act_status if inrange(dag, 18, 64) & any_worker == 0, missing
 
 save "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_All_Years_Prepared.dta", replace

@@ -4,9 +4,10 @@
 *** Aim: Compare IWP Employees with AROP w/o IWP
 ***   PART 0-4: income-based analyses, always pre- and post-transfer
 ***   PART 5:   SMD (RX060, survey-based) - post-transfer groups only, no pre-transfer counterpart
+***   PART 6:   Composition of AROP w/o IWP by current economic status (PL031/PL032)
 *** Groups:
 ***   IWP Employees: >= 7 months as employee, age 18-64, below threshold (pre: iw_arop_pre_rel, post: iw_poor_post_rel)
-***   AROP w/o IWP:  < 7 months worked in any status, age 18-64, below threshold (axi_pre_rel, axi_post_rel)
+***   AROP w/o IWP:  < 7 months worked in any status, age 18-64, without old-age benefits, below threshold (axi_pre_rel, axi_post_rel)
 ***   SMD comparison: both 18-64, without old-age benefit recipients (smd_grp)
 *** Money amounts: monthly EUR, nominal; gaps and euro bands additionally real (HICP Austria, prices of 2023)
 *** year = UDB survey year (income reference year = year - 1)
@@ -30,7 +31,7 @@ label variable inc_rel_pre "Equivalised pre-transfer income in % of poverty thre
 *******************************************************************************************************************************************************************************************
 *** PART 0: Incidence - IWP Employees vs. AROP w/o IWP, pre and post
 *** IWP rate = share of employees (>= 7 months, 18-64) below threshold
-*** AROP w/o IWP rate = share of non-working persons (18-64) below threshold
+*** AROP w/o IWP rate = share of non-working persons (18-64, without old-age benefits) below threshold
 *******************************************************************************************************************************************************************************************
 
 *** Unweighted N (poor persons)
@@ -213,6 +214,35 @@ svy, subpop(smd_sample): logit smd i.smd_grp c.inc_rel i.year i.age_grp i.sex c.
 margins smd_grp, subpop(smd_sample) vce(unconditional) post
 lincom 100 * _b[1.smd_grp] - 100 * _b[0bn.smd_grp]
 nlcom (rel_change_pct: 100 * (_b[1.smd_grp] / _b[0bn.smd_grp] - 1))
+
+
+*******************************************************************************************************************************************************************************************
+*** PART 6: Composition of AROP w/o IWP by current economic status (who are the non-working poor?)
+*** act_status harmonised from PL031 (until 2020) and PL032 (from 2021), see "Prepair EU-Silc Files"
+*** Shares in % (weighted), unweighted N, pooled 2018-2024 and by year; pre and post; SMD rate by status (post, SMD sample)
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART 6: Composition of AROP w/o IWP ==================="
+
+*** Pooled 2018-2024: weighted shares (%) and unweighted N, pre and post
+foreach v in axi_pre_rel axi_post_rel {
+    di _n as result "--- `v' == 1: shares by status (pooled 2018-2024) ---"
+    tab act_status if `v' == 1 & inrange(year, 2018, 2024) [aw=dwt]
+    tab act_status if `v' == 1 & inrange(year, 2018, 2024)
+}
+
+*** By year (post): weighted shares in %
+di _n as result "--- axi_post_rel == 1: shares by status and year (column %) ---"
+tab act_status year if axi_post_rel == 1 & inrange(year, 2018, 2024) [aw=dwt], col nofreq
+
+*** Reference: all non-working persons 18-64 without old-age benefits (poor and non-poor), pooled
+di _n as result "--- All non-working 18-64 without old-age benefits: shares by status (pooled) ---"
+tab act_status if any_worker == 0 & inrange(dag, 18, 64) & oldage_ben == 0 & inrange(year, 2018, 2024) [aw=dwt]
+
+*** SMD rate by status within AROP w/o IWP (SMD sample, post), pooled, weighted, with N
+di _n as result "--- SMD rate (%) by status within AROP w/o IWP (SMD sample) ---"
+table act_status if smd_grp == 0 & !missing(smd) & inrange(year, 2018, 2024) [aw=dwt], statistic(mean smd) nformat(%9.4f mean)
+tab act_status if smd_grp == 0 & !missing(smd) & inrange(year, 2018, 2024)
 
 di as result "=== FERTIG ==="
 

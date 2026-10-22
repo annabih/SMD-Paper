@@ -7,7 +7,7 @@
 ***     post = HY020 / HX050, pre = HY022 / HX050 (before social transfers other than old-age and survivor benefits)
 ***   - UDB incomes are annual -> divided by 12 so that all amounts are monthly (as in EUROMOD output)
 ***   - No anchored threshold and no threshold effects (no policy scenario on EU-SILC)
-***   - AROP w/o IWP = poor and not working >= 7 months in any status (any_worker == 0), age 18-64 (working-age population, consistent across all analyses)
+***   - AROP w/o IWP = poor and not working >= 7 months in any status (any_worker == 0), age 18-64, without old-age benefits (PY100G > 0); identical in all analyses
 ***   - SMD groups: both 18-64, old-age benefit recipients excluded
 *******************************************************************************************************************************************************************************************
 clear all
@@ -88,16 +88,16 @@ tab arop_post_rel HX080 if !missing(HX080), missing
 
 ********************************************************************************
 * AROP without IWP = not working >= 7 months in any status, below threshold
-* Age 18-64 in all analyses (working-age population)
+* Age 18-64 and without old-age benefit recipients in all analyses (identical to the SMD comparison group)
 * The poverty threshold above is computed on the total population (all ages) and is not affected
 * Poor self-employed workers are in neither group
 ********************************************************************************
 
-gen byte axi_pre_rel = pre_disp_hh_income_equ < poverty_threshold_rel if any_worker == 0 & inrange(dag, 18, 64) & !missing(pre_disp_hh_income_equ, poverty_threshold_rel)
-gen byte axi_post_rel = post_disp_hh_income_equ < poverty_threshold_rel if any_worker == 0 & inrange(dag, 18, 64) & !missing(post_disp_hh_income_equ, poverty_threshold_rel)
+gen byte axi_pre_rel = pre_disp_hh_income_equ < poverty_threshold_rel if any_worker == 0 & inrange(dag, 18, 64) & oldage_ben == 0 & !missing(pre_disp_hh_income_equ, poverty_threshold_rel)
+gen byte axi_post_rel = post_disp_hh_income_equ < poverty_threshold_rel if any_worker == 0 & inrange(dag, 18, 64) & oldage_ben == 0 & !missing(post_disp_hh_income_equ, poverty_threshold_rel)
 
-label variable axi_pre_rel "AROP w/o IWP (not working, 18-64), pre-transfer, relative threshold"
-label variable axi_post_rel "AROP w/o IWP (not working, 18-64), post-transfer, relative threshold"
+label variable axi_pre_rel "AROP w/o IWP (not working, 18-64, no old-age pension), pre-transfer, relative threshold"
+label variable axi_post_rel "AROP w/o IWP (not working, 18-64, no old-age pension), post-transfer, relative threshold"
 
 gen byte axi_diff_rel = axi_pre_rel - axi_post_rel
 label variable axi_diff_rel "AROP w/o IWP diff pre - post, relative threshold"

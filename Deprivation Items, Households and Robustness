@@ -355,7 +355,7 @@ tab hh_type smd_grp if s_main == 1
 *** PART G: Household structure and poverty risk - children vs. adults
 *** Outcomes: poverty pre and post within each group's base population (2018-2024, age 18-64)
 ***   IWP Employees: base = employees >= 7 months (employed == 1); outcome iw_arop_pre_rel / iw_poor_post_rel
-***   AROP w/o IWP: base = not working >= 7 months in any status, 18-64; outcome axi_pre_rel / axi_post_rel
+***   AROP w/o IWP: base = not working >= 7 months in any status, 18-64, without old-age benefits; outcome axi_pre_rel / axi_post_rel
 *** Models: M1 children, M2 adults, M3 both, M4 both standardised; all with year FE
 *** Wald test children = adults in M3 and M4 (needed before claiming that one predictor dominates)
 *******************************************************************************************************************************************************************************************
@@ -364,7 +364,7 @@ di _n(2) as result "=================== PART G: Children vs. adults ============
 
 capture drop base_iwp base_axi z_children z_adults
 gen byte base_iwp = (employed == 1 & inrange(year, 2018, 2024))
-gen byte base_axi = (any_worker == 0 & inrange(dag, 18, 64) & inrange(year, 2018, 2024))
+gen byte base_axi = (any_worker == 0 & inrange(dag, 18, 64) & oldage_ben == 0 & inrange(year, 2018, 2024))
 
 egen z_children = std(n_children) if inrange(dag, 18, 64) & inrange(year, 2018, 2024)
 egen z_adults = std(n_adults) if inrange(dag, 18, 64) & inrange(year, 2018, 2024)

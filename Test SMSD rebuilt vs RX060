@@ -1,0 +1,297 @@
+*******************************************************************************************************************************************************************************************
+*** Title: Test - SMSD rebuilt from the 13 items vs. RX060 as provided in the UDB
+*** Aim: Check whether the main results hold when SMSD is built from the 13 items for ALL years (consistent definition)
+***   instead of RX060, which is old SMD (4 of 9 items) in 2018-2020 and SMSD (7 of 13 items) from 2021 (series break)
+***   PART A: Build the 13 items and two rebuilt indicators
+***           smsd13  = >= 7 of 13 items lacking, all 13 items valid (strict)
+***           smsd13l = >= 7 lacking among valid items, at least 10 items valid (lenient, fewer missings)
+***   PART B: Coverage and agreement with RX060 by year (cross-tab, % agreement, kappa)
+***           expectation: from 2021 smsd13 and RX060 almost identical (checks the item coding); 2018-2020 differ (break)
+***   PART C: Rates by year - persons 16+ (benchmark: Eurostat ilc_mdsd11 for Austria) and by comparison group
+***   PART D: Headline effect IWP Employees vs. AROP w/o IWP with each indicator: M1, M5, M11, M12
+***           D1 own sample of each indicator; D2 common sample (all indicators valid) -> differences only from the definition
+***   PART E: Same for the robustness samples R2 (without students) and R3 (unemployed only), M1 and M12
+***   PART F: Effect by period (2018-2020 vs. 2021-2024) with each indicator: does the break change the gap?
+*** Groups: smd_grp (1 = IWP Employees, 0 = AROP w/o IWP), identical to all other analyses
+*** Input: SILC_All_Years_Adjusted.dta
+*** Output: Test_SMSD_log.txt, Test_SMSD_Results.xlsx
+*** Nothing is saved to the analysis data set - pure test script
+*******************************************************************************************************************************************************************************************
+
+capture log close
+clear all
+set more off
+
+log using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/Test_SMSD_log.txt", text replace
+
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_All_Years_Adjusted.dta", clear
+keep if inrange(year, 2018, 2024)
+
+
+*******************************************************************************************************************************************************************************************
+*** PART A: 13 items and rebuilt indicators (same coding as "Deprivation Items, Households and Robustness")
+*******************************************************************************************************************************************************************************************
+
+foreach var in HS011 HS021 HS031 HS040 HS050 HS060 HH050 HS110 HD080 PD020 PD030 PD050 PD060 PD070 PD080 {
+    capture confirm variable `var'
+    if _rc == 0 {
+        capture confirm string variable `var'
+        if _rc == 0 {
+            replace `var' = subinstr(`var', ",", ".", .)
+            destring `var', replace force
+        }
+    }
+    else {
+        gen double `var' = .
+        di as error "`var' not found, created as missing"
+    }
+}
+
+capture drop dep_*
+gen byte dep_unexpected = (HS060 == 2) if inlist(HS060, 1, 2)
+gen byte dep_holiday = (HS040 == 2) if inlist(HS040, 1, 2)
+gen byte dep_meal = (HS050 == 2) if inlist(HS050, 1, 2)
+gen byte dep_warm = (HH050 == 2) if inlist(HH050, 1, 2)
+gen byte dep_car = (HS110 == 2) if inlist(HS110, 1, 2, 3)
+gen byte dep_furniture = (HD080 == 2) if inlist(HD080, 1, 2, 3)
+gen byte dep_arrears = (inlist(HS011, 1, 2) | inlist(HS021, 1, 2) | inlist(HS031, 1, 2)) if !missing(HS011) | !missing(HS021) | !missing(HS031)
+gen byte dep_clothes = (PD020 == 2) if inlist(PD020, 1, 2, 3)
+gen byte dep_shoes = (PD030 == 2) if inlist(PD030, 1, 2, 3)
+gen byte dep_social = (PD050 == 2) if inlist(PD050, 1, 2, 3)
+gen byte dep_leisure = (PD060 == 2) if inlist(PD060, 1, 2, 3)
+gen byte dep_pocket = (PD070 == 2) if inlist(PD070, 1, 2, 3)
+gen byte dep_internet = (PD080 == 2) if inlist(PD080, 1, 2, 3)
+
+local items13 "dep_unexpected dep_holiday dep_arrears dep_meal dep_warm dep_car dep_furniture dep_clothes dep_shoes dep_social dep_leisure dep_pocket dep_internet"
+
+egen dep_n = rowtotal(`items13')
+egen dep_valid = rownonmiss(`items13')
+
+* Strict: all 13 items valid
+gen byte smsd13 = (dep_n >= 7) if dep_valid == 13
+label variable smsd13 "SMSD rebuilt: >= 7 of 13 lacking, all 13 valid"
+
+* Lenient: at least 10 valid items, >= 7 lacking among them
+gen byte smsd13l = (dep_n >= 7) if dep_valid >= 10
+label variable smsd13l "SMSD rebuilt: >= 7 lacking, >= 10 items valid"
+
+* RX060 as used in all analyses
+capture confirm variable smd
+if _rc != 0 {
+    gen byte smd = RX060 if inlist(RX060, 0, 1)
+}
+label variable smd "RX060 as provided (old SMD 2018-2020, SMSD 2021-2024)"
+
+gen byte period = cond(year <= 2020, 1, 2)
+label define periodlbl 1 "2018-2020 (RX060 = old SMD)" 2 "2021-2024 (RX060 = SMSD)"
+label values period periodlbl
+
+*** Number of valid items by year (persons 18-64)
+di _n as result "--- Number of valid items (of 13) by year, persons 18-64 ---"
+tab year dep_valid if inrange(dag, 18, 64), row nofreq
+di _n as result "--- Missing items by year (share missing), comparison groups ---"
+foreach v of local items13 {
+    gen byte mis_`v' = missing(`v')
+}
+table year if !missing(smd_grp), statistic(mean mis_*) nformat(%9.3f mean)
+drop mis_*
+
+
+*******************************************************************************************************************************************************************************************
+*** PART B: Coverage and agreement with RX060
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART B: Coverage and agreement ==================="
+
+di _n as result "--- Valid observations by year: RX060, smsd13, smsd13l (comparison groups) ---"
+table year if !missing(smd_grp), statistic(count smd smsd13 smsd13l)
+
+forvalues y = 2018/2024 {
+    di _n as result "--- `y': RX060 (rows) vs. smsd13 (columns), all persons ---"
+    tab smd smsd13 if year == `y'
+    quietly count if year == `y' & !missing(smd, smsd13)
+    local n = r(N)
+    quietly count if year == `y' & !missing(smd, smsd13) & smd == smsd13
+    di as text "Agreement `y': " %6.2f 100 * r(N) / `n' " % of " `n' " persons"
+    capture noisily kap smd smsd13 if year == `y'
+}
+
+di _n as result "--- Agreement within the comparison groups by period ---"
+forvalues p = 1/2 {
+    di _n as result "--- Period `p' ---"
+    tab smd smsd13 if period == `p' & !missing(smd_grp), cell nofreq
+}
+
+
+*******************************************************************************************************************************************************************************************
+*** PART C: Rates by year
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART C: Rates by year ==================="
+
+* Personal items (PD) exist only for persons 16+; Eurostat assigns children a value derived from the adults
+* -> benchmark on persons 16+ (Eurostat ilc_mdsd11 by age: 16 years or over; RX060 for all ages shown for reference)
+di _n as result "--- Persons 16+, weighted (compare smsd13 with Eurostat ilc_mdsd11 Austria, age 16 or over) ---"
+table year if dag >= 16 [aw=dwt], statistic(mean smd smsd13 smsd13l) nformat(%9.4f mean)
+di _n as result "--- RX060, all ages, weighted ---"
+table year [aw=dwt], statistic(mean smd) nformat(%9.4f mean)
+
+di _n as result "--- Persons 18-64, weighted ---"
+table year if inrange(dag, 18, 64) [aw=dwt], statistic(mean smd smsd13 smsd13l) nformat(%9.4f mean)
+
+foreach o in smd smsd13 smsd13l {
+    di _n as result "--- `o' by year and comparison group (weighted) ---"
+    table year smd_grp [aw=dwt], statistic(mean `o') nformat(%9.4f mean)
+}
+
+* Gap IWP - AxI by year for each indicator, pp and %
+tempname pc
+tempfile res_year
+postfile `pc' str8 indicator int year double(s_iwp s_axi pp rel n_iwp n_axi) using `res_year', replace
+foreach o in smd smsd13 smsd13l {
+    forvalues y = 2018/2024 {
+        quietly sum `o' [aw=dwt] if year == `y' & smd_grp == 1
+        local a = 100 * r(mean)
+        local na = r(N)
+        quietly sum `o' [aw=dwt] if year == `y' & smd_grp == 0
+        local b = 100 * r(mean)
+        local nb = r(N)
+        post `pc' ("`o'") (`y') (`a') (`b') (`a' - `b') (100 * (`a' / `b' - 1)) (`na') (`nb')
+    }
+}
+postclose `pc'
+
+
+*******************************************************************************************************************************************************************************************
+*** PART D: Headline effect with each indicator
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART D: Headline effect ==================="
+
+capture drop hh_cl
+egen long hh_cl = group(year idhh)
+svyset hh_cl [pw=dwt], vce(linearized)
+
+local c1 "i.year"
+local c5 "i.year c.inc_rel"
+local c11 "i.year i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban i.health_bad i.limit"
+local c12 "i.year i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban"
+
+capture program drop grp_effect
+program define grp_effect, rclass
+    syntax varname, SAMPle(varname) GRoup(varname) [CONTRols(string)]
+    quietly svy, subpop(`sample'): logit `varlist' i.`group' `controls'
+    local b = _b[1.`group']
+    local se = _se[1.`group']
+    local df = e(df_r)
+    local n = e(N_sub)
+    local p = 2 * ttail(`df', abs(`b' / `se'))
+    local or = exp(`b')
+    quietly margins `group', subpop(`sample') vce(unconditional) post
+    local s1 = 100 * _b[1.`group']
+    local s0 = 100 * _b[0bn.`group']
+    quietly lincom 100 * _b[1.`group'] - 100 * _b[0bn.`group']
+    local pp = r(estimate)
+    local pp_se = r(se)
+    quietly nlcom (rel: 100 * (_b[1.`group'] / _b[0bn.`group'] - 1))
+    tempname rb rV
+    matrix `rb' = r(b)
+    matrix `rV' = r(V)
+    local rel = `rb'[1, 1]
+    local rel_se = sqrt(`rV'[1, 1])
+    di as text %-10s "`varlist'" " OR " %6.3f `or' " p=" %6.4f `p' " | IWP " %6.2f `s1' "% AxI " %6.2f `s0' "% | " %7.2f `pp' " pp (SE " %4.2f `pp_se' ") | " %7.1f `rel' " % (SE " %4.1f `rel_se' ") | N=" `n'
+    return scalar n = `n'
+    return scalar or = `or'
+    return scalar p = `p'
+    return scalar s_iwp = `s1'
+    return scalar s_axi = `s0'
+    return scalar pp = `pp'
+    return scalar pp_se = `pp_se'
+    return scalar rel = `rel'
+    return scalar rel_se = `rel_se'
+end
+
+tempname pe
+tempfile res_eff
+postfile `pe' str6 part str8 sample str8 indicator str4 spec double(n or p s_iwp s_axi pp pp_se rel rel_se) using `res_eff', replace
+
+* Samples: own sample per indicator (D1) and common sample with all three indicators valid (D2)
+gen byte s_all = (!missing(smd_grp))
+gen byte s_common = (!missing(smd_grp) & !missing(smd, smsd13, smsd13l))
+* Robustness samples (as in Part I of the deprivation script)
+gen byte s_r2 = (!missing(smd_grp) & !(smd_grp == 0 & act_status == 3))
+gen byte s_r3 = (!missing(smd_grp) & (smd_grp == 1 | (smd_grp == 0 & act_status == 2)))
+gen byte s_r2c = (s_r2 == 1 & s_common == 1)
+gen byte s_r3c = (s_r3 == 1 & s_common == 1)
+
+di _n as result "--- D1: own sample of each indicator ---"
+foreach o in smd smsd13 smsd13l {
+    foreach m in 1 5 11 12 {
+        di as result "D1 `o' M`m'"
+        grp_effect `o', sample(s_all) group(smd_grp) controls(`c`m'')
+        post `pe' ("D1") ("main") ("`o'") ("M`m'") (r(n)) (r(or)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+    }
+}
+
+di _n as result "--- D2: common sample (all indicators valid) ---"
+foreach o in smd smsd13 smsd13l {
+    foreach m in 1 5 11 12 {
+        di as result "D2 `o' M`m'"
+        grp_effect `o', sample(s_common) group(smd_grp) controls(`c`m'')
+        post `pe' ("D2") ("main") ("`o'") ("M`m'") (r(n)) (r(or)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+    }
+}
+
+
+*******************************************************************************************************************************************************************************************
+*** PART E: Robustness samples R2 / R3 with each indicator (common sample), M1 and M12
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART E: R2 / R3 ==================="
+
+foreach r in r2 r3 {
+    foreach o in smd smsd13 smsd13l {
+        foreach m in 1 12 {
+            di as result "E `r' `o' M`m'"
+            grp_effect `o', sample(s_`r'c) group(smd_grp) controls(`c`m'')
+            post `pe' ("E") ("`r'") ("`o'") ("M`m'") (r(n)) (r(or)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+        }
+    }
+}
+
+
+*******************************************************************************************************************************************************************************************
+*** PART F: Effect by period - does the indicator break change the gap?
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART F: By period ==================="
+
+forvalues p = 1/2 {
+    capture drop s_p
+    gen byte s_p = (s_common == 1 & period == `p')
+    foreach o in smd smsd13 {
+        foreach m in 1 12 {
+            di as result "F period `p' `o' M`m'"
+            grp_effect `o', sample(s_p) group(smd_grp) controls(`c`m'')
+            post `pe' ("F") ("per`p'") ("`o'") ("M`m'") (r(n)) (r(or)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+        }
+    }
+}
+postclose `pe'
+
+
+*******************************************************************************************************************************************************************************************
+*** Export
+*******************************************************************************************************************************************************************************************
+
+use `res_year', clear
+list, noobs abbreviate(10) sepby(indicator)
+export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/Test_SMSD_Results.xlsx", sheet("C_by_year", replace) firstrow(variables)
+
+use `res_eff', clear
+list part sample indicator spec n s_iwp s_axi pp pp_se rel p, noobs abbreviate(10) sepby(part sample spec)
+export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/Test_SMSD_Results.xlsx", sheet("D_E_F_effects", replace) firstrow(variables)
+
+di as result "=== FERTIG ==="
+
+log close

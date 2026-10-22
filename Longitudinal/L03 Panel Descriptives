@@ -72,6 +72,14 @@ tab release
 tab state_lag state [aw=RB062], row nofreq
 tab state_lag state
 
+*** B1b: Transition matrix separately for each year pair (release - 1 -> release), row % and cell sizes
+forvalues r = 2019/2023 {
+    local r0 = `r' - 1
+    di _n as result "--- B1b: transitions `r0' -> `r' (release `r') ---"
+    capture noisily tab state_lag state [aw=RB062] if release == `r', row nofreq
+    capture noisily tab state_lag state if release == `r'
+}
+
 *** B2: SMSD entry and exit rates by group in t
 * Entry: share with SMSD in t among those without SMSD in t-1; exit: share without SMSD in t among those with SMSD in t-1
 di _n as result "--- B2: SMSD entry rate (no SMSD in t-1 -> SMSD in t), by group in t ---"
@@ -166,6 +174,13 @@ foreach spec in "arop 4" "arop 3" "smd 3" {
         forvalues k = 2/`w' {
             di _n as result "--- Group in year `k' by starting group (row %) ---"
             tab g1 g`k' [aw=RB06`w'] if inlist(g1, 1, 2), row nofreq
+        }
+        * Full transition matrix for every year step of the persons followed over the window (all starting groups)
+        forvalues k = 1/`=`w'-1' {
+            local kp1 = `k' + 1
+            di _n as result "--- Transition matrix year `k' -> year `kp1' (persons followed `w' years, row %) ---"
+            tab g`k' g`kp1' [aw=RB06`w'] if inlist(g`k', 1, 2, 3, 4) & inlist(g`kp1', 1, 2, 3, 4), row nofreq
+            tab g`k' g`kp1' if inlist(g`k', 1, 2, 3, 4) & inlist(g`kp1', 1, 2, 3, 4)
         }
         * Flows between consecutive years within each starting group (cell %, input for an alluvial diagram)
         forvalues sg = 1/2 {

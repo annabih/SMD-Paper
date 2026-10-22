@@ -3,9 +3,9 @@
 *** Aim: All calculations behind the deprivation statements of the paper (cf. SA2 presentation / working document)
 ***   PART A: Setup - 13 SMSD items (+ 3 arrears sub-items), samples, survey design, helper program
 ***   PART B: Descriptives - item prevalence by group (pp difference, relative change, ratio), by year
-***   PART C: Headline SMD effect - M1 year FE, M2-M10 year FE + one control each, M11 all controls
+***   PART C: Headline SMD effect - M1 year FE, M2-M10 year FE + one control each, M11 all controls, M12 all controls without health (M2-M8)
 ***   PART D: Time pattern - SMD by year and group
-***   PART E: Item decomposition - effect of employment on each item (M1-M11), Holm/Bonferroni-adjusted p-values
+***   PART E: Item decomposition - effect of employment on each item (M1-M12), Holm/Bonferroni-adjusted p-values
 ***   PART F: Heterogeneity - group x household type / children (Wald tests, Holm-adjusted), AMEs by household type
 ***   PART G: Household structure and poverty risk - children vs. adults (M1-M4), pre and post, per group; test children = adults
 ***   PART H: Sector within IWP Employees - IWP rate and SMD by sector (sector exists only for persons with a job)
@@ -134,6 +134,7 @@ svyset hh_cl [pw=dwt], vce(linearized)
 * M6:  + education (ISCED)    M7:  + region (NUTS 1)       M8: + degree of urbanisation
 * M9:  + general health (bad / very bad)                   M10: + limitation in activities
 * M11: all controls together
+* M12: all controls except health (M2-M8 together, without M9/M10): health may itself be a consequence of deprivation
 * Missing values of education, urbanisation and health are an own category (constant N across models)
 ********************************************************************************
 
@@ -148,6 +149,7 @@ local c8 "i.year i.urban"
 local c9 "i.year i.health_bad"
 local c10 "i.year i.limit"
 local c11 "i.year i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban i.health_bad i.limit"
+local c12 "i.year i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban"
 
 ********************************************************************************
 * Helper program: group effect of a binary group variable on a binary outcome
@@ -237,9 +239,9 @@ foreach y of local outcomes {
 *** PART C: Headline SMD effect - one control at a time and all together (pooled 2018-2024)
 *******************************************************************************************************************************************************************************************
 
-di _n(2) as result "=================== PART C: Headline SMD effect, M1-M11 ==================="
+di _n(2) as result "=================== PART C: Headline SMD effect, M1-M12 ==================="
 
-forvalues m = 1/11 {
+forvalues m = 1/12 {
     di _n as result "--- M`m': `c`m'' ---"
     grp_effect smd, sample(s_main) group(smd_grp) controls(`c`m'')
     post `ph' ("C_headline") ("smd") ("M`m'") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
@@ -247,6 +249,9 @@ forvalues m = 1/11 {
 
 *** Full model with all controls (M11): coefficients of all controls
 svy, subpop(s_main): logit smd i.smd_grp `c11', or
+
+*** Full model without health controls (M12): coefficients of all controls
+svy, subpop(s_main): logit smd i.smd_grp `c12', or
 
 
 *******************************************************************************************************************************************************************************************
@@ -266,12 +271,12 @@ testparm i.smd_grp#i.year
 
 
 *******************************************************************************************************************************************************************************************
-*** PART E: Item decomposition - employment effect on each item (M1-M11, one table per model)
+*** PART E: Item decomposition - employment effect on each item (M1-M12, one table per model)
 *******************************************************************************************************************************************************************************************
 
 di _n(2) as result "=================== PART E: Item decomposition ==================="
 
-forvalues m = 1/11 {
+forvalues m = 1/12 {
     di _n as result "--- Items, M`m': `c`m'' ---"
     foreach y in `items13' `items_arr' {
         grp_effect `y', sample(s_main) group(smd_grp) controls(`c`m'')
@@ -453,7 +458,7 @@ use `res_effects', clear
 gen byte main13 = (part == "E_items" & !inlist(outcome, "dep_arr_rent", "dep_arr_util", "dep_arr_loan"))
 gen double p_bonf = .
 gen double p_holm = .
-forvalues mm = 1/11 {
+forvalues mm = 1/12 {
     local m "M`mm'"
     preserve
     keep if main13 == 1 & spec == "`m'"
@@ -478,7 +483,7 @@ list part outcome spec or p p_holm s_iwp s_axi pp rel, noobs abbreviate(8) separ
 * Full item tables per model (input for the LaTeX tables)
 gen int spec_n = real(subinstr(spec, "M", "", .))
 sort spec_n outcome
-forvalues mm = 1/11 {
+forvalues mm = 1/12 {
     di _n as result "--- Item table M`mm' ---"
     list outcome n s_iwp s_axi pp pp_se rel rel_se or p p_holm if part == "E_items" & spec_n == `mm', noobs abbreviate(10) separator(0) clean
 }

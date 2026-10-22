@@ -177,32 +177,44 @@ label define limitlbl 1 "Severely limited" 2 "Limited" 3 "Not limited" 9 "Missin
 label values limit limitlbl
 label variable limit "Limitation in activities because of health (PH030)"
 
-* Sector of main job (NACE, 13 groups): PL111 (2015-2020, letters), PL111A (2021-2024, codes 1-13)
+* Sector of main job (NACE, 13 groups): PL111 (2015-2020), PL111A (2021-2024)
 * Only defined for persons with a job -> used within IWP Employees only, never as control in the group comparison
+* Robust coding: the UDB may store sections as letters ("a", "b-e", ...) or as codes 1-13;
+* letters are normalised (lower case, no blanks) before mapping
 gen byte sector = .
-capture confirm variable PL111
-if _rc == 0 {
-    replace sector = 1 if year <= 2020 & strtrim(PL111) == "a"
-    replace sector = 2 if year <= 2020 & strtrim(PL111) == "b-e"
-    replace sector = 3 if year <= 2020 & strtrim(PL111) == "f"
-    replace sector = 4 if year <= 2020 & strtrim(PL111) == "g"
-    replace sector = 5 if year <= 2020 & strtrim(PL111) == "h"
-    replace sector = 6 if year <= 2020 & strtrim(PL111) == "i"
-    replace sector = 7 if year <= 2020 & strtrim(PL111) == "j"
-    replace sector = 8 if year <= 2020 & strtrim(PL111) == "k"
-    replace sector = 9 if year <= 2020 & strtrim(PL111) == "l-n"
-    replace sector = 10 if year <= 2020 & strtrim(PL111) == "o"
-    replace sector = 11 if year <= 2020 & strtrim(PL111) == "p"
-    replace sector = 12 if year <= 2020 & strtrim(PL111) == "q"
-    replace sector = 13 if year <= 2020 & strtrim(PL111) == "r-u"
-}
-capture confirm variable PL111A
-if _rc == 0 {
-    capture confirm string variable PL111A
+foreach v in PL111 PL111A {
+    capture confirm variable `v'
     if _rc == 0 {
-        destring PL111A, replace force
+        capture confirm string variable `v'
+        if _rc != 0 {
+            tostring `v', replace force
+        }
+        capture drop sec_s
+        gen sec_s = lower(subinstr(subinstr(strtrim(`v'), " ", "", .), "_", "-", .))
+        if "`v'" == "PL111" local yrs "year <= 2020"
+        if "`v'" == "PL111A" local yrs "year >= 2021"
+        * letters
+        replace sector = 1 if `yrs' & sec_s == "a"
+        replace sector = 2 if `yrs' & inlist(sec_s, "b-e", "be", "b", "c", "d", "e")
+        replace sector = 3 if `yrs' & sec_s == "f"
+        replace sector = 4 if `yrs' & sec_s == "g"
+        replace sector = 5 if `yrs' & sec_s == "h"
+        replace sector = 6 if `yrs' & sec_s == "i"
+        replace sector = 7 if `yrs' & sec_s == "j"
+        replace sector = 8 if `yrs' & sec_s == "k"
+        replace sector = 9 if `yrs' & inlist(sec_s, "l-n", "ln", "l", "m", "n")
+        replace sector = 10 if `yrs' & sec_s == "o"
+        replace sector = 11 if `yrs' & sec_s == "p"
+        replace sector = 12 if `yrs' & sec_s == "q"
+        replace sector = 13 if `yrs' & inlist(sec_s, "r-u", "ru", "r", "s", "t", "u")
+        * numeric codes 1-13
+        capture drop sec_n
+        gen sec_n = real(sec_s)
+        replace sector = sec_n if `yrs' & missing(sector) & inrange(sec_n, 1, 13)
+        di _n "=== Raw values of `v' (persons with a job) ==="
+        tab sec_s if `yrs' & employed == 1, missing
+        drop sec_s sec_n
     }
-    replace sector = PL111A if year >= 2021 & inrange(PL111A, 1, 13)
 }
 label define sectorlbl 1 "A Agriculture" 2 "B-E Industry" 3 "F Construction" 4 "G Trade" 5 "H Transport" 6 "I Accommodation/food" 7 "J Information/communication" 8 "K Finance" 9 "L-N Real estate/business services" 10 "O Public administration" 11 "P Education" 12 "Q Health/social work" 13 "R-U Arts/other services"
 label values sector sectorlbl

@@ -88,7 +88,8 @@ tab arop_post_rel HX080 if !missing(HX080), missing
 
 ********************************************************************************
 * AROP without IWP = not working >= 7 months in any status, below threshold
-* All ages (general descriptives); restricted to 18-64 only for the SMD comparison
+* Age 18-64 in all analyses (working-age population)
+* The poverty threshold above is computed on the total population (all ages) and is not affected
 * Poor self-employed workers are in neither group
 ********************************************************************************
 

@@ -21,9 +21,9 @@ capture log close
 clear all
 set more off
 
-log using "Y:/Desktop/USB/SMSD_Paper/05_Deprivation_log.txt", text replace
+log using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_log.txt", text replace
 
-use "Y:/Desktop/USB/SMSD_Paper/SILC_All_Years_Adjusted.dta", clear
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_All_Years_Adjusted.dta", clear
 
 
 *******************************************************************************************************************************************************************************************
@@ -405,7 +405,7 @@ postclose `phh'
 
 * B: descriptives
 use `res_desc', clear
-export excel using "Y:/Desktop/USB/SMSD_Paper/05_Deprivation_Results.xlsx", sheet("B_descriptives", replace) firstrow(variables)
+export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("B_descriptives", replace) firstrow(variables)
 
 * C, E: group effects; Holm and Bonferroni across the 13 items within each item specification
 use `res_effects', clear
@@ -432,7 +432,7 @@ foreach m in M1 M4 {
 }
 order part outcome spec n or or_lo or_hi p p_holm p_bonf s_iwp s_axi pp pp_se rel rel_se
 list part outcome spec or p p_holm s_iwp s_axi pp rel, noobs abbreviate(8) separator(0)
-export excel using "Y:/Desktop/USB/SMSD_Paper/05_Deprivation_Results.xlsx", sheet("CE_effects", replace) firstrow(variables)
+export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("CE_effects", replace) firstrow(variables)
 
 * F: heterogeneity tests; Holm and Bonferroni across the 13 items (index excluded)
 use `res_het', clear
@@ -453,12 +453,12 @@ foreach t in hhtype haskids nchcat {
 }
 order outcome p_hhtype p_hhtype_holm p_hhtype_bonf p_haskids p_haskids_holm p_haskids_bonf p_nchcat p_nchcat_holm p_nchcat_bonf
 list, noobs abbreviate(10) separator(0)
-export excel using "Y:/Desktop/USB/SMSD_Paper/05_Deprivation_Results.xlsx", sheet("F_heterogeneity", replace) firstrow(variables)
+export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("F_heterogeneity", replace) firstrow(variables)
 
 * G: children vs. adults
 use `res_hh', clear
 list, noobs abbreviate(10) sepby(outcome)
-export excel using "Y:/Desktop/USB/SMSD_Paper/05_Deprivation_Results.xlsx", sheet("G_children_adults", replace) firstrow(variables)
+export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("G_children_adults", replace) firstrow(variables)
 
 di as result "=== FERTIG ==="
 

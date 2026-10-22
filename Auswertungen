@@ -18,10 +18,10 @@ capture log close
 clear all
 set more off
 
-log using "Y:/Desktop/USB/SMSD_Paper/04_Auswertungen_log.txt", text replace
+log using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/04_Auswertungen_log.txt", text replace
 
 
-use "Y:/Desktop/USB/SMSD_Paper/SILC_All_Years_Adjusted.dta", clear
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_All_Years_Adjusted.dta", clear
 
 capture drop inc_rel_pre
 gen double inc_rel_pre = 100 * pre_disp_hh_income_equ / poverty_threshold_rel if !missing(pre_disp_hh_income_equ, poverty_threshold_rel)

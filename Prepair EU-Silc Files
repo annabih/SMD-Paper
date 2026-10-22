@@ -17,7 +17,7 @@ clear all
 set more off
 
 
-use "Y:/Desktop/USB/SMSD_Paper/SILC_CrossSec_All_Years.dta", clear
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_CrossSec_All_Years.dta", clear
 
 ********************************************************************************
 * Destring (decimal comma -> point); create empty variable if not available
@@ -127,4 +127,4 @@ label variable arope_lwi "AROPE component: low work intensity"
 tab year smd, missing
 tab year arope, missing
 
-save "Y:/Desktop/USB/SMSD_Paper/SILC_All_Years_Prepared.dta", replace
+save "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_All_Years_Prepared.dta", replace

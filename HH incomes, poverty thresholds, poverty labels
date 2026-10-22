@@ -14,7 +14,7 @@ clear all
 set more off
 
 
-use "Y:/Desktop/USB/SMSD_Paper/SILC_All_Years_Prepared.dta", clear
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_All_Years_Prepared.dta", clear
 
 ********************************************************************************
 * Equivalised household income (monthly)
@@ -269,4 +269,4 @@ label variable age_grp "Age group (18-64)"
 * Mean income position by group: are IWP Employees closer to the threshold?
 table year smd_grp [pw=dwt], statistic(mean inc_rel) nototals nformat(%9.2f mean)
 
-save "Y:/Desktop/USB/SMSD_Paper/SILC_All_Years_Adjusted.dta", replace
+save "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_All_Years_Adjusted.dta", replace

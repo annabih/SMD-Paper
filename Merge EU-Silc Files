@@ -23,14 +23,14 @@ foreach yr of local years {
     * Skip year if any of the four UDB files is missing
     local complete = 1
     foreach f in H D R P {
-        capture confirm file "Y:/Desktop/USB/SMSD_Paper/AT_CROSS/`yr'/UDB_cAT`ys'`f'.csv"
+        capture confirm file "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/AT_CROSS/`yr'/UDB_cAT`ys'`f'.csv"
         if _rc != 0 {
             local complete = 0
-            di as error "   not found: Y:/Desktop/USB/SMSD_Paper/AT_CROSS/`yr'/UDB_cAT`ys'`f'.csv"
+            di as error "   not found: /Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/AT_CROSS/`yr'/UDB_cAT`ys'`f'.csv"
         }
     }
     if `complete' == 0 {
-        di as error "Year `yr': UDB csv files not complete in Y:/Desktop/USB/SMSD_Paper/AT_CROSS/`yr' - skipped"
+        di as error "Year `yr': UDB csv files not complete in /Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/AT_CROSS/`yr' - skipped"
         local skipped "`skipped' `yr'"
         continue
     }
@@ -38,26 +38,26 @@ foreach yr of local years {
     di _n "=== Processing year `yr' ===" _n
 
     * H file (household data)
-    import delimited "Y:/Desktop/USB/SMSD_Paper/AT_CROSS/`yr'/UDB_cAT`ys'H.csv", delimiter(",") clear case(preserve) stringcols(_all)
+    import delimited "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/AT_CROSS/`yr'/UDB_cAT`ys'H.csv", delimiter(",") clear case(preserve) stringcols(_all)
     rename HB030 idhh
     tempfile household
     save `household'
 
     * D file (household register)
-    import delimited "Y:/Desktop/USB/SMSD_Paper/AT_CROSS/`yr'/UDB_cAT`ys'D.csv", delimiter(",") clear case(preserve) stringcols(_all)
+    import delimited "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/AT_CROSS/`yr'/UDB_cAT`ys'D.csv", delimiter(",") clear case(preserve) stringcols(_all)
     rename DB030 idhh
     tempfile hh_register
     save `hh_register'
 
     * R file (personal register, includes children)
-    import delimited "Y:/Desktop/USB/SMSD_Paper/AT_CROSS/`yr'/UDB_cAT`ys'R.csv", delimiter(",") clear case(preserve) stringcols(_all)
+    import delimited "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/AT_CROSS/`yr'/UDB_cAT`ys'R.csv", delimiter(",") clear case(preserve) stringcols(_all)
     rename RB030 idperson
     rename RX030 idhh
     tempfile p_register
     save `p_register'
 
     * P file (personal data, persons 16+)
-    import delimited "Y:/Desktop/USB/SMSD_Paper/AT_CROSS/`yr'/UDB_cAT`ys'P.csv", delimiter(",") clear case(preserve) stringcols(_all)
+    import delimited "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/AT_CROSS/`yr'/UDB_cAT`ys'P.csv", delimiter(",") clear case(preserve) stringcols(_all)
     rename PB030 idperson
     rename PX030 idhh
 
@@ -94,13 +94,13 @@ foreach yr of local years {
 }
 
 if `first_year' == 1 {
-    di as error "No year could be processed - check path Y:/Desktop/USB/SMSD_Paper/AT_CROSS"
+    di as error "No year could be processed - check path /Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/AT_CROSS"
     exit 601
 }
 
 use `alldata', clear
 
-save "Y:/Desktop/USB/SMSD_Paper/SILC_CrossSec_All_Years.dta", replace
+save "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_CrossSec_All_Years.dta", replace
 
 di _n "Complete! Total observations: " _N
 di "Years merged: `done'"

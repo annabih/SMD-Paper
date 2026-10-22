@@ -1,0 +1,201 @@
+*******************************************************************************************************************************************************************************************
+*** Title: Panel analyses - does employment protect against deprivation beyond income? (EU-SILC longitudinal, Austria)
+*** Aim: Within-person evidence complementing the cross-sectional comparison IWP Employees vs. AROP w/o IWP
+***   PART A: Panel structure - persons, years per person, switchers between the two groups
+***   PART B: Transitions t-1 -> t (each release's last year pair, two-year weight RB062)
+***           B1 transition matrix between states; B2 SMD before/after by path;
+***           B3 difference-in-differences: entering work while staying poor (AxI -> IWP vs. AxI -> AxI)
+***              and losing work while staying poor (IWP -> AxI vs. IWP -> IWP), with and without change in income position
+***   PART C: Fixed-effects models (person-year panel): SMD on group within the same person
+***           C1 linear FE among the poor (IWP vs. AxI), C2 conditional (FE) logit, C3 linear FE all 18-64 with states
+***   PART D: Persistence over four years (each release's last four years, four-year weight RB064)
+*** Notes:
+***   - Levels (rates, gaps, bands) stay in the cross-sectional scripts; this script is about change within persons
+***   - FE models are unweighted with person-clustered SE (standard for FE; longitudinal weights differ by release)
+***   - Effects reported in pp and as relative change in % (relative to the comparison group's level)
+*** Input: SILC_Long_Prepared.dta, SILC_Long_Panel.dta (L02)
+*** Output: L03_Panel_log.txt
+*******************************************************************************************************************************************************************************************
+
+capture log close
+clear all
+set more off
+
+log using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/L03_Panel_log.txt", text replace
+
+
+*******************************************************************************************************************************************************************************************
+*** PART A: Panel structure
+*******************************************************************************************************************************************************************************************
+
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Panel.dta", clear
+keep if id_inconsistent == 0
+xtset pid year
+
+di _n(2) as result "=================== PART A: Panel structure ==================="
+
+*** Person-years by year and state (18-64)
+tab year state if inrange(dag, 18, 64)
+
+*** Years observed per person (18-64)
+bysort pid: egen n_years = total(inrange(dag, 18, 64))
+egen byte pid_tag = tag(pid)
+tab n_years if pid_tag == 1 & n_years > 0
+
+*** Switchers: persons observed both as IWP Employee and as AROP w/o IWP (they identify the FE effect)
+bysort pid: egen grp_min = min(smd_grp)
+bysort pid: egen grp_max = max(smd_grp)
+gen byte switcher = (grp_min == 0 & grp_max == 1)
+di _n as result "Persons ever in one of the two groups, and switchers between them:"
+count if pid_tag == 1 & !missing(grp_min)
+count if pid_tag == 1 & switcher == 1
+* Person-years of switchers by group and SMD
+tab smd_grp smd if switcher == 1, row
+
+
+*******************************************************************************************************************************************************************************************
+*** PART B: Transitions t-1 -> t
+*** Each release contributes its last year pair (release - 1 -> release), weighted with its two-year weight RB062
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART B: Transitions ==================="
+
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Prepared.dta", clear
+
+bysort release pid (year): gen byte state_lag = state[_n - 1] if year[_n - 1] == year - 1
+bysort release pid (year): gen byte smd_lag = smd[_n - 1] if year[_n - 1] == year - 1
+bysort release pid (year): gen double inc_rel_lag = inc_rel[_n - 1] if year[_n - 1] == year - 1
+
+keep if year == release & RB062 > 0 & !missing(RB062) & !missing(state, state_lag)
+
+tab release
+
+*** B1: Transition matrix (row %: where do persons in state t-1 end up in t?)
+tab state_lag state [aw=RB062], row nofreq
+tab state_lag state
+
+*** B2: SMD before and after, by path (IWP / AxI at t-1)
+gen int path = 10 * state_lag + state
+label define pathlbl 11 "IWP -> IWP" 12 "IWP -> AxI" 13 "IWP -> not poor" 14 "IWP -> other" 21 "AxI -> IWP" 22 "AxI -> AxI" 23 "AxI -> not poor" 24 "AxI -> other"
+label values path pathlbl
+table path if inlist(state_lag, 1, 2) & !missing(smd, smd_lag) [aw=RB062], statistic(mean smd_lag) statistic(mean smd) statistic(frequency) nformat(%9.4f mean)
+
+*** B3: Difference-in-differences on the change in SMD (dsmd x 100 = pp)
+gen double dsmd = 100 * (smd - smd_lag) if !missing(smd, smd_lag)
+gen double dinc_rel = inc_rel - inc_rel_lag if !missing(inc_rel, inc_rel_lag)
+
+* B3a: entering work while staying poor (AxI -> IWP) vs. staying non-working poor (AxI -> AxI)
+capture drop move
+gen byte move = (state == 1) if state_lag == 2 & inlist(state, 1, 2)
+di _n as result "--- B3a: AxI -> IWP vs. AxI -> AxI (change in SMD, pp) ---"
+regress dsmd i.move i.release [pw=RB062], vce(cluster pid)
+quietly sum smd_lag [aw=RB062] if move == 1
+local base_a = 100 * r(mean)
+di as result "Baseline SMD of movers (t-1): " %6.2f `base_a' " %;  DiD relative to baseline: " %6.1f (100 * _b[1.move] / `base_a') " %"
+di _n as result "--- B3a with change in income position (beyond income) ---"
+regress dsmd i.move c.dinc_rel i.release [pw=RB062], vce(cluster pid)
+di as result "DiD relative to baseline: " %6.1f (100 * _b[1.move] / `base_a') " %"
+
+* B3b: losing work while staying poor (IWP -> AxI) vs. staying working poor (IWP -> IWP)
+capture drop move
+gen byte move = (state == 2) if state_lag == 1 & inlist(state, 1, 2)
+di _n as result "--- B3b: IWP -> AxI vs. IWP -> IWP (change in SMD, pp) ---"
+regress dsmd i.move i.release [pw=RB062], vce(cluster pid)
+quietly sum smd_lag [aw=RB062] if move == 1
+local base_b = 100 * r(mean)
+di as result "Baseline SMD of movers (t-1): " %6.2f `base_b' " %;  DiD relative to baseline: " %6.1f (100 * _b[1.move] / `base_b') " %"
+di _n as result "--- B3b with change in income position (beyond income) ---"
+regress dsmd i.move c.dinc_rel i.release [pw=RB062], vce(cluster pid)
+di as result "DiD relative to baseline: " %6.1f (100 * _b[1.move] / `base_b') " %"
+
+* Cell sizes (check before interpreting)
+tab state_lag state if inlist(state_lag, 1, 2) & inlist(state, 1, 2) & !missing(dsmd)
+
+
+*******************************************************************************************************************************************************************************************
+*** PART C: Fixed-effects models (person-year panel, latest release per person-year)
+*** Identified only from persons who change group / state over time (see switchers in PART A)
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART C: Fixed effects ==================="
+
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Panel.dta", clear
+keep if id_inconsistent == 0
+xtset pid year
+
+* Comparison level for relative change: SMD share of AROP w/o IWP person-years
+quietly sum smd if smd_grp == 0
+local base_c = 100 * r(mean)
+di as result "SMD share among AROP w/o IWP person-years: " %6.2f `base_c' " %"
+
+*** C1: Linear FE among the poor (IWP Employees vs. AROP w/o IWP); coefficient x 100 = pp
+di _n as result "--- C1a: FE, year FE only ---"
+xtreg smd i.smd_grp i.year if !missing(smd_grp), fe vce(cluster pid)
+di as result "IWP vs. AxI within person: " %6.2f (100 * _b[1.smd_grp]) " pp, " %6.1f (100 * 100 * _b[1.smd_grp] / `base_c') " % relative to AxI level"
+
+di _n as result "--- C1b: FE + income position and household composition (beyond income) ---"
+xtreg smd i.smd_grp c.inc_rel c.n_children c.n_adults i.year if !missing(smd_grp), fe vce(cluster pid)
+di as result "IWP vs. AxI within person: " %6.2f (100 * _b[1.smd_grp]) " pp, " %6.1f (100 * 100 * _b[1.smd_grp] / `base_c') " % relative to AxI level"
+
+*** C2: Conditional (FE) logit - odds ratio; uses only persons who change in smd and group
+di _n as result "--- C2: FE logit (odds ratios) ---"
+xtlogit smd i.smd_grp c.inc_rel c.n_children c.n_adults i.year if !missing(smd_grp), fe or
+
+*** C3: Linear FE for all 18-64 with states (reference: AROP w/o IWP); uses all within-person changes
+di _n as result "--- C3: FE, all 18-64, states (ref. AxI) ---"
+xtreg smd ib2.state c.inc_rel c.n_children c.n_adults i.year if inrange(dag, 18, 64) & !missing(state), fe vce(cluster pid)
+di as result "IWP vs. AxI within person: " %6.2f (100 * _b[1.state]) " pp, " %6.1f (100 * 100 * _b[1.state] / `base_c') " % relative to AxI level"
+* IWP Employee vs. not poor
+lincom 100 * _b[1.state] - 100 * _b[3.state]
+
+
+*******************************************************************************************************************************************************************************************
+*** PART D: Persistence over four years
+*** Each release contributes persons observed in its last four years (release-3 ... release), weight RB064
+*** Persistent SMD (Eurostat logic): SMD in the last year and in at least 2 of the 3 preceding years
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART D: Persistence ==================="
+
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Prepared.dta", clear
+
+gen byte in_win = inrange(year, release - 3, release)
+bysort release pid: egen n_win = total(in_win & !missing(smd))
+bysort release pid: egen smd_years = total(in_win & smd == 1)
+bysort release pid: egen iwp_years = total(in_win & state == 1)
+bysort release pid: egen axi_years = total(in_win & state == 2)
+
+keep if year == release & RB064 > 0 & !missing(RB064) & n_win == 4
+
+gen byte smd_prev = smd_years - smd
+gen byte persistent_smd = (smd == 1 & smd_prev >= 2) if !missing(smd)
+label variable persistent_smd "Persistent SMD (last year and >= 2 of 3 preceding years)"
+
+* Group history over the four years
+gen byte history = .
+replace history = 1 if iwp_years == 4
+replace history = 2 if axi_years == 4
+replace history = 3 if iwp_years > 0 & axi_years > 0
+replace history = 4 if missing(history) & (iwp_years > 0 | axi_years > 0)
+label define histlbl 1 "Always IWP (4/4)" 2 "Always AxI (4/4)" 3 "Both IWP and AxI" 4 "IWP or AxI in some years"
+label values history histlbl
+
+tab release
+
+*** Persistence and years in SMD by state in the last year
+table state if inlist(state, 1, 2) [aw=RB064], statistic(mean persistent_smd) statistic(mean smd_years) statistic(frequency) nformat(%9.4f mean)
+
+*** Persistence by group history over the four years
+table history [aw=RB064], statistic(mean persistent_smd) statistic(mean smd_years) statistic(frequency) nformat(%9.4f mean)
+
+*** IWP vs. AxI (state in last year): persistent SMD, pp difference and relative change
+capture drop g
+gen byte g = (state == 1) if inlist(state, 1, 2)
+logit persistent_smd i.g i.release [pw=RB064], vce(cluster pid)
+margins g, post
+lincom 100 * _b[1.g] - 100 * _b[0bn.g]
+nlcom (rel_change_pct: 100 * (_b[1.g] / _b[0bn.g] - 1))
+
+di as result "=== FERTIG ==="
+
+log close

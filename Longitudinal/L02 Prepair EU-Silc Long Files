@@ -1,0 +1,193 @@
+*******************************************************************************************************************************************************************************************
+*** Title: Prepare EU-SILC longitudinal analysis files (same definitions as the cross-sectional scripts)
+*** Input:  SILC_Long_All_Releases.dta (L01)
+***         SILC_All_Years_Adjusted.dta (cross-sectional script 03) -> official-style poverty threshold by year
+*** Output: SILC_Long_Prepared.dta  (all releases, one row per release x person x year)
+***         SILC_Long_Panel.dta     (person-year panel: each person-year from the latest release containing it)
+*** Definitions (as cross-sectional, adapted to what the longitudinal UDB provides):
+***   - PL073-PL076 are not in the longitudinal UDB -> months from the monthly activity calendar PL211A-PL211L
+***     (income reference year): codes 1-2 = employee, 3-4 = self-employed
+***   - worker = >= 7 months as employee, age 18-64; any_worker = >= 7 months in any status, age 18-64
+***   - RX060 / HX080 are not in the longitudinal UDB -> SMSD rebuilt from the 13 items (>= 7 of 13 lacking);
+***     same definition in all years
+***   - Income: post = HY020 / HX050, pre = HY022 / HX050 (monthly, bounded at 0)
+***   - Poverty threshold NOT computed from the panel sample (not cross-sectionally representative):
+***     taken by year from the cross-sectional pipeline (60% of weighted median). Years without a
+***     cross-sectional threshold get no poverty status.
+***   - Old-age benefit recipients (PY100G > 0) excluded from the SMD comparison groups
+*******************************************************************************************************************************************************************************************
+clear all
+set more off
+
+
+********************************************************************************
+* Poverty threshold by year from the cross-sectional file
+********************************************************************************
+
+use year poverty_threshold_rel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_All_Years_Adjusted.dta", clear
+collapse (mean) poverty_threshold_rel, by(year)
+list, noobs
+tempfile thresholds
+save `thresholds'
+
+
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_All_Releases.dta", clear
+
+********************************************************************************
+* Destring (decimal comma -> point); create empty variable if not available
+********************************************************************************
+
+local numvars "RB060 RB062 RB063 RB064 RB080 RB090 RB110 RX010 HY020 HY022 HX050 PY100G PL211A PL211B PL211C PL211D PL211E PL211F PL211G PL211H PL211I PL211J PL211K PL211L HS011 HS021 HS031 HS040 HS050 HS060 HH050 HS110 HD080 PD020 PD030 PD050 PD060 PD070 PD080"
+
+foreach var of local numvars {
+    capture confirm variable `var'
+    if _rc == 0 {
+        capture confirm string variable `var'
+        if _rc == 0 {
+            replace `var' = subinstr(`var', ",", ".", .)
+            destring `var', replace force
+        }
+    }
+    else {
+        gen double `var' = .
+        di as text "`var' not found, created as missing"
+    }
+}
+
+********************************************************************************
+* Person ID, age, sex
+********************************************************************************
+
+* Person ID across releases (checked for consistency below)
+egen long pid = group(idperson)
+label variable pid "Person ID (RB030)"
+
+gen dag = RX010
+replace dag = year - RB080 if missing(dag) & !missing(RB080)
+label variable dag "Age (RX010, else year - RB080)"
+
+gen byte sex = RB090
+label define sexlbl 1 "Male" 2 "Female"
+label values sex sexlbl
+
+********************************************************************************
+* Months in income reference year from monthly activity calendar PL211A-PL211L
+********************************************************************************
+
+gen byte months_emp = 0
+gen byte months_worked = 0
+gen byte months_valid = 0
+foreach m in A B C D E F G H I J K L {
+    replace months_emp = months_emp + inlist(PL211`m', 1, 2)
+    replace months_worked = months_worked + inlist(PL211`m', 1, 2, 3, 4)
+    replace months_valid = months_valid + !missing(PL211`m')
+}
+replace months_emp = . if months_valid == 0
+replace months_worked = . if months_valid == 0
+label variable months_emp "Months as employee in income reference year (PL211A-L = 1/2)"
+label variable months_worked "Months worked in any status (PL211A-L = 1-4)"
+
+gen byte worker = (months_emp >= 7) if !missing(months_emp) & inrange(dag, 18, 64)
+gen byte employed = (worker == 1)
+gen byte any_worker = (months_worked >= 7) if !missing(months_worked) & inrange(dag, 18, 64)
+replace any_worker = 0 if !inrange(dag, 18, 64)
+label variable worker "Employee >= 7 months, age 18-64"
+label variable employed "Worker (employee >= 7 months)"
+label variable any_worker "Worked >= 7 months in any status, age 18-64"
+
+gen byte oldage_ben = (PY100G > 0 & !missing(PY100G))
+label variable oldage_ben "Receives old-age benefits (PY100G > 0)"
+
+********************************************************************************
+* SMSD rebuilt from the 13 items (1 = lacking because cannot afford)
+********************************************************************************
+
+gen byte dep_unexpected = (HS060 == 2) if inlist(HS060, 1, 2)
+gen byte dep_holiday = (HS040 == 2) if inlist(HS040, 1, 2)
+gen byte dep_meal = (HS050 == 2) if inlist(HS050, 1, 2)
+gen byte dep_warm = (HH050 == 2) if inlist(HH050, 1, 2)
+gen byte dep_car = (HS110 == 2) if inlist(HS110, 1, 2, 3)
+gen byte dep_furniture = (HD080 == 2) if inlist(HD080, 1, 2, 3)
+gen byte dep_arrears = (inlist(HS011, 1, 2) | inlist(HS021, 1, 2) | inlist(HS031, 1, 2)) if !missing(HS011) | !missing(HS021) | !missing(HS031)
+gen byte dep_clothes = (PD020 == 2) if inlist(PD020, 1, 2, 3)
+gen byte dep_shoes = (PD030 == 2) if inlist(PD030, 1, 2, 3)
+gen byte dep_social = (PD050 == 2) if inlist(PD050, 1, 2, 3)
+gen byte dep_leisure = (PD060 == 2) if inlist(PD060, 1, 2, 3)
+gen byte dep_pocket = (PD070 == 2) if inlist(PD070, 1, 2, 3)
+gen byte dep_internet = (PD080 == 2) if inlist(PD080, 1, 2, 3)
+
+egen smsd_n = rowtotal(dep_unexpected dep_holiday dep_meal dep_warm dep_car dep_furniture dep_arrears dep_clothes dep_shoes dep_social dep_leisure dep_pocket dep_internet)
+egen smsd_valid = rownonmiss(dep_unexpected dep_holiday dep_meal dep_warm dep_car dep_furniture dep_arrears dep_clothes dep_shoes dep_social dep_leisure dep_pocket dep_internet)
+gen byte smd = (smsd_n >= 7) if smsd_valid == 13 | smsd_n >= 7
+label variable smd "Severe material and social deprivation (13 items rebuilt, >= 7 lacking)"
+
+tab year smd, missing
+
+********************************************************************************
+* Income, poverty status (threshold from cross-sectional file)
+********************************************************************************
+
+gen double post_disp_hh_income_equ = max((HY020 / HX050) / 12, 0) if !missing(HY020, HX050) & HX050 > 0
+gen double pre_disp_hh_income_equ = max((HY022 / HX050) / 12, 0) if !missing(HY022, HX050) & HX050 > 0
+
+merge m:1 year using `thresholds', keep(master match) nogenerate
+
+gen byte arop_post_rel = post_disp_hh_income_equ < poverty_threshold_rel if !missing(post_disp_hh_income_equ, poverty_threshold_rel)
+gen byte arop_pre_rel = pre_disp_hh_income_equ < poverty_threshold_rel if !missing(pre_disp_hh_income_equ, poverty_threshold_rel)
+gen double inc_rel = 100 * post_disp_hh_income_equ / poverty_threshold_rel if !missing(post_disp_hh_income_equ, poverty_threshold_rel)
+label variable inc_rel "Equivalised post-transfer income in % of poverty threshold"
+
+tab year arop_post_rel, missing
+
+********************************************************************************
+* Household composition (children < 14), within release, year and current household
+********************************************************************************
+
+bysort release year idhh: egen n_children = total(dag < 14 & !missing(dag))
+bysort release year idhh: egen n_adults = total(dag >= 14 & !missing(dag))
+
+********************************************************************************
+* Groups and states (post-transfer, age 18-64)
+* smd_grp: 1 = IWP Employees, 0 = AROP w/o IWP (both without old-age benefit recipients) - as cross-sectional
+* state:   1 = IWP Employee, 2 = AROP w/o IWP, 3 = not poor, 4 = other (poor self-employed, mixed, old-age benefits)
+********************************************************************************
+
+gen byte smd_grp = .
+replace smd_grp = 1 if employed == 1 & arop_post_rel == 1 & oldage_ben == 0
+replace smd_grp = 0 if any_worker == 0 & arop_post_rel == 1 & inrange(dag, 18, 64) & oldage_ben == 0
+label define smdgrp 0 "AROP w/o IWP" 1 "IWP Employees"
+label values smd_grp smdgrp
+
+gen byte state = .
+replace state = 1 if smd_grp == 1
+replace state = 2 if smd_grp == 0
+replace state = 3 if arop_post_rel == 0 & inrange(dag, 18, 64)
+replace state = 4 if arop_post_rel == 1 & missing(smd_grp) & inrange(dag, 18, 64)
+label define statelbl 1 "IWP Employee" 2 "AROP w/o IWP" 3 "Not poor" 4 "Other poor"
+label values state statelbl
+
+tab year state, missing
+
+save "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Prepared.dta", replace
+
+********************************************************************************
+* Person-year panel: each person-year from the latest release that contains it
+* ID consistency check: sex and birth year must be constant within pid
+********************************************************************************
+
+bysort pid year (release): keep if _n == _N
+
+bysort pid: egen sd_birth = sd(RB080)
+bysort pid: egen sd_sex = sd(RB090)
+gen byte id_inconsistent = (sd_birth > 0 & !missing(sd_birth)) | (sd_sex > 0 & !missing(sd_sex))
+di _n as result "=== ID consistency across releases (share of persons with changing sex / birth year) ==="
+egen byte pid_tag = tag(pid)
+tab id_inconsistent if pid_tag == 1
+* If this share is not close to 0, person IDs are not consistent across releases:
+* the panel analyses in L03 then exclude these persons (id_inconsistent == 1)
+drop sd_birth sd_sex pid_tag
+
+xtset pid year
+xtdescribe if inrange(dag, 18, 64)
+
+save "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Panel.dta", replace

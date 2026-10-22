@@ -1,0 +1,128 @@
+*******************************************************************************************************************************************************************************************
+*** Title: Merge EU-SILC longitudinal UDB files for Austria (all releases)
+*** Aim: For each release, merge R, P, H, D files person-year by person-year and stack all releases
+*** Input: AT_LONG/<release>/UDB_lAT<yy>R.csv, ...P.csv, ...H.csv, ...D.csv (one folder per release, as in AT_CROSS)
+*** Output: SILC_Long_All_Releases.dta (one row per release x person x year)
+*** Notes:
+***   - Each release contains several survey years (rotating panel); releases overlap.
+***     Overlaps are NOT removed here: script L02 builds (a) a person-year panel from the latest release
+***     and (b) release-specific transition / persistence files that use each release's own longitudinal weights.
+***   - Keys: R file RB030 (person) + RB010 (year), household RB040 (current household)
+***           P file PB030 + PB010, household PX030
+***           H file HB030 + HB010; D file DB030 + DB010
+***   - All variables imported as strings (avoids type conflicts across releases); destring in L02
+***   - Releases without complete CSV files are skipped automatically
+*******************************************************************************************************************************************************************************************
+clear all
+set more off
+
+
+local releases "2018 2019 2020 2021 2022 2023 2024"
+local first = 1
+local done ""
+local skipped ""
+
+foreach rel of local releases {
+
+    local rs = substr("`rel'", 3, 2)
+
+    * Skip release if any of the four files is missing
+    local complete = 1
+    foreach f in R P H D {
+        capture confirm file "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/AT_LONG/`rel'/UDB_lAT`rs'`f'.csv"
+        if _rc != 0 {
+            local complete = 0
+            di as error "   not found: /Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/AT_LONG/`rel'/UDB_lAT`rs'`f'.csv"
+        }
+    }
+    if `complete' == 0 {
+        di as error "Release `rel': files not complete - skipped"
+        local skipped "`skipped' `rel'"
+        continue
+    }
+
+    di _n "=== Processing release `rel' ===" _n
+
+    * H file (household data per year)
+    import delimited "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/AT_LONG/`rel'/UDB_lAT`rs'H.csv", delimiter(",") clear case(preserve) stringcols(_all)
+    rename HB030 idhh
+    rename HB010 year_s
+    duplicates report idhh year_s
+    tempfile household
+    save `household'
+
+    * D file (household register per year)
+    import delimited "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/AT_LONG/`rel'/UDB_lAT`rs'D.csv", delimiter(",") clear case(preserve) stringcols(_all)
+    rename DB030 idhh
+    rename DB010 year_s
+    tempfile hh_register
+    save `hh_register'
+
+    * R file (personal register per year, includes children)
+    import delimited "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/AT_LONG/`rel'/UDB_lAT`rs'R.csv", delimiter(",") clear case(preserve) stringcols(_all)
+    rename RB030 idperson
+    rename RB010 year_s
+    rename RB040 idhh
+    duplicates report idperson year_s
+    tempfile p_register
+    save `p_register'
+
+    * P file (personal data, persons 16+)
+    import delimited "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/AT_LONG/`rel'/UDB_lAT`rs'P.csv", delimiter(",") clear case(preserve) stringcols(_all)
+    rename PB030 idperson
+    rename PB010 year_s
+    rename PX030 idhh_p
+
+    * Merge personal files (keeps R-only persons such as children)
+    merge 1:1 idperson year_s using `p_register'
+    tab _merge
+    assert _merge != 1
+    drop _merge
+
+    * Household ID from P file should equal current household ID from R file
+    count if !missing(idhh_p) & idhh_p != idhh
+    drop idhh_p
+
+    * Merge household files
+    merge m:1 idhh year_s using `household'
+    tab _merge
+    drop if _merge == 2
+    drop _merge
+
+    merge m:1 idhh year_s using `hh_register'
+    tab _merge
+    drop if _merge == 2
+    drop _merge
+
+    gen release = `rel'
+
+    di "Release `rel' merged: " _N " person-year observations"
+
+    if `first' == 1 {
+        tempfile alldata
+        save `alldata'
+        local first = 0
+    }
+    else {
+        append using `alldata'
+        save `alldata', replace
+    }
+    local done "`done' `rel'"
+}
+
+if `first' == 1 {
+    di as error "No release could be processed - check path .../EU-SILC/AT_LONG and file names UDB_lAT<yy>R.csv"
+    exit 601
+}
+
+use `alldata', clear
+
+destring year_s, gen(year) force
+drop year_s
+
+save "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_All_Releases.dta", replace
+
+di _n "Complete! Total person-year-release observations: " _N
+di "Releases merged: `done'"
+di "Releases skipped: `skipped'"
+tab year release

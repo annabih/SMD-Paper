@@ -32,6 +32,13 @@ set more off
 * Poverty threshold by year from the cross-sectional file
 ********************************************************************************
 
+* Stop with a clear message if the cross-sectional file is not available (e.g. iCloud file not downloaded)
+capture confirm file "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_All_Years_Adjusted.dta"
+if _rc != 0 {
+    di as error "SILC_All_Years_Adjusted.dta not found: run the cross-sectional script 'HH incomes, poverty thresholds, poverty labels' first,"
+    di as error "or download the file from iCloud (Finder: right click -> Download Now)"
+    exit 601
+}
 use year poverty_threshold_rel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_All_Years_Adjusted.dta", clear
 collapse (mean) poverty_threshold_rel, by(year)
 list, noobs

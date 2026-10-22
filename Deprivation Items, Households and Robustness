@@ -8,6 +8,7 @@
 ***   PART E: Item decomposition - effect of employment on each item (M1-M12), Holm/Bonferroni-adjusted p-values
 ***   PART F: Heterogeneity - group x household type / children (Wald tests, Holm-adjusted), AMEs by household type
 ***   PART G: Household structure and poverty risk - children vs. adults (M1-M4), pre and post, per group; test children = adults
+***   PART G2: Household structure and SMD - children vs. adults within IWP Employees and AROP w/o IWP (year FE; + income position), +1 effects in pp and %, group interaction tests
 ***   PART H: Sector within IWP Employees - IWP rate and SMD by sector (sector exists only for persons with a job)
 *** Groups: smd_grp (script 03): 1 = IWP Employees, 0 = AROP w/o IWP; both 18-64, post-transfer, without old-age benefit recipients
 *** Outcome: smd = RX060 as provided in the UDB
@@ -417,6 +418,98 @@ postclose `phh'
 
 
 *******************************************************************************************************************************************************************************************
+*** PART G2: Household structure and SMD - children vs. adults within the SMD comparison groups
+*** Sample: s_main (IWP Employees and AROP w/o IWP, 18-64, post-transfer, without old-age benefit recipients), 2018-2024
+*** Outcome: smd (RX060); no pre/post (SMD has no pre-transfer version)
+*** Variants: a = year FE only (total effect of household composition)
+***           b = year FE + income position (inc_rel): do children raise SMD beyond their effect on equivalised income?
+*** Models per group: M1 children, M2 persons 14+, M3 both, M4 both standardised (as in Part G); Wald test children = adults
+*** Effects of +1 child / +1 person 14+ from M3: predicted SMD share before and after +1, pp and % change with SE
+*** Pooled interaction model: does the children (adults) effect differ between IWP Employees and AROP w/o IWP?
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART G2: Children vs. adults and SMD ==================="
+
+capture drop g2_iwp g2_axi
+gen byte g2_iwp = (s_main == 1 & smd_grp == 1)
+gen byte g2_axi = (s_main == 1 & smd_grp == 0)
+
+local g2_ctrl_a "i.year"
+local g2_ctrl_b "i.year c.inc_rel"
+
+tempname pg2 pg2e
+tempfile res_g2 res_g2e
+postfile `pg2' str4 group str2 variant str4 model str16 predictor double(n or or_lo or_hi p) using `res_g2', replace
+postfile `pg2e' str4 group str2 variant str12 predictor double(n s0 s1 pp pp_se rel rel_se p) using `res_g2e', replace
+
+foreach v in a b {
+    foreach g in iwp axi {
+        di _n as result "--- SMD, group `g', variant `v' (`g2_ctrl_`v'') ---"
+
+        local p1 "c.n_children"
+        local p2 "c.n_adults"
+        local p3 "c.n_children c.n_adults"
+        local p4 "c.z_children c.z_adults"
+
+        forvalues m = 1/4 {
+            svy, subpop(g2_`g'): logit smd `p`m'' `g2_ctrl_`v'', or
+            local df = e(df_r)
+            local n = e(N_sub)
+            local crit = invttail(`df', 0.025)
+            foreach x in n_children n_adults z_children z_adults {
+                capture local b = _b[`x']
+                if _rc == 0 {
+                    local se = _se[`x']
+                    post `pg2' ("`g'") ("`v'") ("M`m'") ("`x'") (`n') (exp(`b')) (exp(`b' - `crit' * `se')) (exp(`b' + `crit' * `se')) (2 * ttail(`df', abs(`b' / `se')))
+                }
+            }
+            if `m' == 3 {
+                test n_children = n_adults
+                post `pg2' ("`g'") ("`v'") ("M3") ("test ch=ad") (`n') (.) (.) (.) (r(p))
+            }
+            if `m' == 4 {
+                test z_children = z_adults
+                post `pg2' ("`g'") ("`v'") ("M4") ("test ch=ad") (`n') (.) (.) (.) (r(p))
+            }
+            * +1 child / +1 person 14+ from M3: predicted shares, pp and % change
+            if `m' == 3 {
+                estimates store g2_m3
+                foreach x in n_children n_adults {
+                    estimates restore g2_m3
+                    quietly margins, at(`x' = generate(`x')) at(`x' = generate(`x' + 1)) subpop(g2_`g') vce(unconditional) post
+                    local s0 = _b[1._at] * 100
+                    local s1 = _b[2._at] * 100
+                    quietly lincom (_b[2._at] - _b[1._at]) * 100
+                    local pp = r(estimate)
+                    local pp_se = r(se)
+                    local pval = r(p)
+                    quietly nlcom (_b[2._at] / _b[1._at] - 1) * 100
+                    local rel = el(r(b), 1, 1)
+                    local rel_se = sqrt(el(r(V), 1, 1))
+                    di as text "`g' `v' +1 `x': " %5.2f `s0' "% -> " %5.2f `s1' "% | " %6.2f `pp' " pp (SE " %4.2f `pp_se' ") | " %6.1f `rel' " % (SE " %4.1f `rel_se' ") | p=" %6.4f `pval'
+                    post `pg2e' ("`g'") ("`v'") ("`x'") (`n') (`s0') (`s1') (`pp') (`pp_se') (`rel') (`rel_se') (`pval')
+                }
+                estimates drop g2_m3
+            }
+        }
+    }
+
+    * Pooled model with interactions: does the effect of children / adults on SMD differ between the groups?
+    di _n as result "--- SMD, pooled interaction model, variant `v' ---"
+    svy, subpop(s_main): logit smd i.smd_grp##(c.n_children c.n_adults) `g2_ctrl_`v'', or
+    local n = e(N_sub)
+    test 1.smd_grp#c.n_children
+    post `pg2' ("pool") ("`v'") ("M3") ("test grp x ch") (`n') (.) (.) (.) (r(p))
+    test 1.smd_grp#c.n_adults
+    post `pg2' ("pool") ("`v'") ("M3") ("test grp x ad") (`n') (.) (.) (.) (r(p))
+    test 1.smd_grp#c.n_children 1.smd_grp#c.n_adults
+    post `pg2' ("pool") ("`v'") ("M3") ("test grp x both") (`n') (.) (.) (.) (r(p))
+}
+postclose `pg2'
+postclose `pg2e'
+
+
+*******************************************************************************************************************************************************************************************
 *** PART H: Sector within IWP Employees (who are the working poor, and where are they deprived?)
 *** Sector exists only for persons with a job -> analysed within IWP Employees / employees only
 *******************************************************************************************************************************************************************************************
@@ -515,6 +608,14 @@ export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. 
 use `res_hh', clear
 list, noobs abbreviate(10) sepby(outcome)
 export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("G_children_adults", replace) firstrow(variables)
+
+* G2: children vs. adults and SMD
+use `res_g2', clear
+list, noobs abbreviate(10) sepby(group variant)
+export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("G2_smd_children_adults", replace) firstrow(variables)
+use `res_g2e', clear
+list, noobs abbreviate(10) sepby(group variant)
+export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("G2_smd_effects", replace) firstrow(variables)
 
 di as result "=== FERTIG ==="
 

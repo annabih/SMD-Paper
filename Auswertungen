@@ -6,7 +6,7 @@
 ***   PART 5:   SMD (RX060, survey-based) - post-transfer groups only, no pre-transfer counterpart
 *** Groups:
 ***   IWP Employees: >= 7 months as employee, age 18-64, below threshold (pre: iw_arop_pre_rel, post: iw_poor_post_rel)
-***   AROP w/o IWP:  < 7 months worked in any status, all ages, below threshold (axi_pre_rel, axi_post_rel)
+***   AROP w/o IWP:  < 7 months worked in any status, age 18-64, below threshold (axi_pre_rel, axi_post_rel)
 ***   SMD comparison: both 18-64, without old-age benefit recipients (smd_grp)
 *** Money amounts: monthly EUR, nominal; gaps and euro bands additionally real (HICP Austria, prices of 2023)
 *** year = UDB survey year (income reference year = year - 1)
@@ -30,7 +30,7 @@ label variable inc_rel_pre "Equivalised pre-transfer income in % of poverty thre
 *******************************************************************************************************************************************************************************************
 *** PART 0: Incidence - IWP Employees vs. AROP w/o IWP, pre and post
 *** IWP rate = share of employees (>= 7 months, 18-64) below threshold
-*** AROP w/o IWP rate = share of non-working persons (all ages) below threshold
+*** AROP w/o IWP rate = share of non-working persons (18-64) below threshold
 *******************************************************************************************************************************************************************************************
 
 *** Unweighted N (poor persons)

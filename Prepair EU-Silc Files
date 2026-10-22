@@ -23,7 +23,7 @@ use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/
 * Destring (decimal comma -> point); create empty variable if not available
 ********************************************************************************
 
-local numvars "HY020 HY022 HX050 HX090 HX080 RB050 RB090 RX010 PX010 PL073 PL074 PL075 PL076 PY100G RX060 RX070"
+local numvars "HY020 HY022 HX050 HX090 HX080 RB050 RB090 RX010 PX010 PL073 PL074 PL075 PL076 PY100G RX060 RX070 DB100 PE040 PE041 PH010 PH030"
 
 foreach var of local numvars {
     capture confirm variable `var'
@@ -126,5 +126,93 @@ label variable arope_lwi "AROPE component: low work intensity"
 
 tab year smd, missing
 tab year arope, missing
+
+********************************************************************************
+* Additional controls for the deprivation models (M5, M6) and sector analysis
+* Missing values are kept as an own category (9) so that N stays constant across models
+********************************************************************************
+
+* Education (ISCED): PE040 (2015-2020), PE041 (2021-2024)
+* 1 = at most lower secondary (ISCED 0-2), 2 = upper/post-secondary (ISCED 3-4), 3 = tertiary (ISCED 5+)
+gen educ_isced = PE040 if year <= 2020
+replace educ_isced = PE041 if year >= 2021
+gen byte educ3 = 9
+replace educ3 = 1 if inrange(educ_isced, 0, 299)
+replace educ3 = 2 if inrange(educ_isced, 300, 499)
+replace educ3 = 3 if educ_isced >= 500 & !missing(educ_isced)
+label define educ3lbl 1 "ISCED 0-2" 2 "ISCED 3-4" 3 "ISCED 5+" 9 "Missing"
+label values educ3 educ3lbl
+label variable educ3 "Education (PE040/PE041), 3 groups"
+
+* Region: NUTS 1 (DB040: AT1 East, AT2 South, AT3 West)
+capture confirm variable DB040
+if _rc != 0 {
+    gen str3 DB040 = ""
+}
+gen byte region = 9
+replace region = 1 if strtrim(DB040) == "AT1"
+replace region = 2 if strtrim(DB040) == "AT2"
+replace region = 3 if strtrim(DB040) == "AT3"
+label define regionlbl 1 "AT1 East" 2 "AT2 South" 3 "AT3 West" 9 "Missing"
+label values region regionlbl
+label variable region "Region NUTS 1 (DB040)"
+
+* Degree of urbanisation (DB100): 1 cities, 2 towns and suburbs, 3 rural areas
+gen byte urban = DB100 if inlist(DB100, 1, 2, 3)
+replace urban = 9 if missing(urban)
+label define urbanlbl 1 "Cities" 2 "Towns and suburbs" 3 "Rural areas" 9 "Missing"
+label values urban urbanlbl
+label variable urban "Degree of urbanisation (DB100)"
+
+* Health: general health bad/very bad (PH010 = 4, 5); limitation in activities (PH030)
+gen byte health_bad = (inlist(PH010, 4, 5)) if inlist(PH010, 1, 2, 3, 4, 5)
+replace health_bad = 9 if missing(health_bad)
+label define healthlbl 0 "Very good to fair" 1 "Bad / very bad" 9 "Missing"
+label values health_bad healthlbl
+label variable health_bad "General health bad or very bad (PH010)"
+
+gen byte limit = PH030 if inlist(PH030, 1, 2, 3)
+replace limit = 9 if missing(limit)
+label define limitlbl 1 "Severely limited" 2 "Limited" 3 "Not limited" 9 "Missing"
+label values limit limitlbl
+label variable limit "Limitation in activities because of health (PH030)"
+
+* Sector of main job (NACE, 13 groups): PL111 (2015-2020, letters), PL111A (2021-2024, codes 1-13)
+* Only defined for persons with a job -> used within IWP Employees only, never as control in the group comparison
+gen byte sector = .
+capture confirm variable PL111
+if _rc == 0 {
+    replace sector = 1 if year <= 2020 & strtrim(PL111) == "a"
+    replace sector = 2 if year <= 2020 & strtrim(PL111) == "b-e"
+    replace sector = 3 if year <= 2020 & strtrim(PL111) == "f"
+    replace sector = 4 if year <= 2020 & strtrim(PL111) == "g"
+    replace sector = 5 if year <= 2020 & strtrim(PL111) == "h"
+    replace sector = 6 if year <= 2020 & strtrim(PL111) == "i"
+    replace sector = 7 if year <= 2020 & strtrim(PL111) == "j"
+    replace sector = 8 if year <= 2020 & strtrim(PL111) == "k"
+    replace sector = 9 if year <= 2020 & strtrim(PL111) == "l-n"
+    replace sector = 10 if year <= 2020 & strtrim(PL111) == "o"
+    replace sector = 11 if year <= 2020 & strtrim(PL111) == "p"
+    replace sector = 12 if year <= 2020 & strtrim(PL111) == "q"
+    replace sector = 13 if year <= 2020 & strtrim(PL111) == "r-u"
+}
+capture confirm variable PL111A
+if _rc == 0 {
+    capture confirm string variable PL111A
+    if _rc == 0 {
+        destring PL111A, replace force
+    }
+    replace sector = PL111A if year >= 2021 & inrange(PL111A, 1, 13)
+}
+label define sectorlbl 1 "A Agriculture" 2 "B-E Industry" 3 "F Construction" 4 "G Trade" 5 "H Transport" 6 "I Accommodation/food" 7 "J Information/communication" 8 "K Finance" 9 "L-N Real estate/business services" 10 "O Public administration" 11 "P Education" 12 "Q Health/social work" 13 "R-U Arts/other services"
+label values sector sectorlbl
+label variable sector "Sector of main job (NACE, PL111/PL111A)"
+
+tab year educ3 if inrange(dag, 18, 64), missing
+tab year region, missing
+tab year urban, missing
+tab year health_bad if inrange(dag, 18, 64), missing
+tab year limit if inrange(dag, 18, 64), missing
+tab year sector if employed == 1, missing
 
 save "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_All_Years_Prepared.dta", replace

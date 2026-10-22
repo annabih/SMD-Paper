@@ -3,11 +3,12 @@
 *** Aim: All calculations behind the deprivation statements of the paper (cf. SA2 presentation / working document)
 ***   PART A: Setup - 13 SMSD items (+ 3 arrears sub-items), samples, survey design, helper program
 ***   PART B: Descriptives - item prevalence by group (pp difference, relative change, ratio), by year
-***   PART C: Headline SMD effect - robustness ladder M1-M4 (M4 = "beyond income")
+***   PART C: Headline SMD effect - control ladder M1-M6 (M4 = "beyond income", M5 + education/region, M6 + health)
 ***   PART D: Time pattern - SMD by year and group
-***   PART E: Item decomposition - effect of employment on each item (M1 and M4), Holm/Bonferroni-adjusted p-values
+***   PART E: Item decomposition - effect of employment on each item (M1, M4, M6), Holm/Bonferroni-adjusted p-values
 ***   PART F: Heterogeneity - group x household type / children (Wald tests, Holm-adjusted), AMEs by household type
 ***   PART G: Household structure and poverty risk - children vs. adults (M1-M4), pre and post, per group; test children = adults
+***   PART H: Sector within IWP Employees - IWP rate and SMD by sector (sector exists only for persons with a job)
 *** Groups: smd_grp (script 03): 1 = IWP Employees, 0 = AROP w/o IWP; both 18-64, post-transfer, without old-age benefit recipients
 *** Outcome: smd = RX060 as provided in the UDB
 *** Survey design: svyset hh_cl [pw=dwt] (household cluster, idhh unique within year)
@@ -130,12 +131,17 @@ svyset hh_cl [pw=dwt], vce(linearized)
 * M2: + age group, sex
 * M3: + household type
 * M4: + income position (% of threshold) -> "beyond income"
+* M5: + education (ISCED 3 groups), region (NUTS 1), degree of urbanisation
+* M6: + health (general health bad, limitation in activities)
+* Missing values of the M5/M6 controls are an own category (constant N across models)
 ********************************************************************************
 
 local c1 "i.year"
 local c2 "i.year i.age_grp i.sex"
 local c3 "i.year i.age_grp i.sex i.hh_type"
 local c4 "i.year i.age_grp i.sex i.hh_type c.inc_rel"
+local c5 "i.year i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban"
+local c6 "i.year i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban i.health_bad i.limit"
 
 ********************************************************************************
 * Helper program: group effect of a binary group variable on a binary outcome
@@ -227,14 +233,15 @@ foreach y of local outcomes {
 
 di _n(2) as result "=================== PART C: Headline SMD effect, M1-M4 ==================="
 
-forvalues m = 1/4 {
+forvalues m = 1/6 {
     di _n as result "--- M`m': `c`m'' ---"
     grp_effect smd, sample(s_main) group(smd_grp) controls(`c`m'')
-    post `ph' ("C_headline") ("smd") ("M`m': `c`m''") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+    post `ph' ("C_headline") ("smd") ("M`m'") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
 }
 
-*** Full M4 model output (coefficients of controls)
+*** Full M4 and M6 model output (coefficients of controls)
 svy, subpop(s_main): logit smd i.smd_grp `c4', or
+svy, subpop(s_main): logit smd i.smd_grp `c6', or
 
 
 *******************************************************************************************************************************************************************************************
@@ -254,12 +261,12 @@ testparm i.smd_grp#i.year
 
 
 *******************************************************************************************************************************************************************************************
-*** PART E: Item decomposition - employment effect on each item (M1 and M4)
+*** PART E: Item decomposition - employment effect on each item (M1, M4, M6)
 *******************************************************************************************************************************************************************************************
 
 di _n(2) as result "=================== PART E: Item decomposition ==================="
 
-foreach m in 1 4 {
+foreach m in 1 4 6 {
     di _n as result "--- Items, M`m': `c`m'' ---"
     foreach y in `items13' `items_arr' {
         grp_effect `y', sample(s_main) group(smd_grp) controls(`c`m'')
@@ -400,6 +407,35 @@ postclose `phh'
 
 
 *******************************************************************************************************************************************************************************************
+*** PART H: Sector within IWP Employees (who are the working poor, and where are they deprived?)
+*** Sector exists only for persons with a job -> analysed within IWP Employees / employees only
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART H: Sector within IWP Employees ==================="
+
+capture drop s_emp s_iwp
+gen byte s_emp = (employed == 1 & !missing(iw_poor_post_rel) & inrange(year, 2018, 2024))
+gen byte s_iwp = (s_main == 1 & smd_grp == 1)
+
+*** H1: IWP rate (post) by sector among all employees, and composition of IWP Employees by sector
+table sector if s_emp == 1 [pw=dwt], statistic(mean iw_poor_post_rel) statistic(frequency) nformat(%9.4f mean)
+tab sector if s_iwp == 1 [aw=dwt]
+
+*** H2: SMD rate by sector among IWP Employees (descriptive) and cell sizes
+table sector if s_iwp == 1 [pw=dwt], statistic(mean smd) statistic(frequency) nformat(%9.4f mean)
+
+*** H3: SMD by sector among IWP Employees, with M6 controls; joint test of sector
+svy, subpop(s_iwp): logit smd i.sector i.year i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban i.health_bad i.limit, or
+testparm i.sector
+margins sector, subpop(s_iwp) vce(unconditional)
+
+*** H4: IWP risk by sector among employees (post), with year, age, sex, household type, education, region
+svy, subpop(s_emp): logit iw_poor_post_rel i.sector i.year i.age_grp i.sex i.hh_type i.educ3 i.region i.urban, or
+testparm i.sector
+margins sector, subpop(s_emp) vce(unconditional)
+
+
+*******************************************************************************************************************************************************************************************
 *** Export results to Excel (one sheet per part), incl. Holm/Bonferroni adjustment
 *******************************************************************************************************************************************************************************************
 
@@ -412,7 +448,7 @@ use `res_effects', clear
 gen byte main13 = (part == "E_items" & !inlist(outcome, "dep_arr_rent", "dep_arr_util", "dep_arr_loan"))
 gen double p_bonf = .
 gen double p_holm = .
-foreach m in M1 M4 {
+foreach m in M1 M4 M6 {
     preserve
     keep if main13 == 1 & spec == "`m'"
     local k = _N

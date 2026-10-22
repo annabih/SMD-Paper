@@ -5,7 +5,7 @@
 ***   PART B: Descriptives - item prevalence by group (pp difference, relative change, ratio), by year
 ***   PART C: Headline SMD effect - M1 year FE, M2-M10 year FE + one control each, M11 all controls
 ***   PART D: Time pattern - SMD by year and group
-***   PART E: Item decomposition - effect of employment on each item (M1 and M11), Holm/Bonferroni-adjusted p-values
+***   PART E: Item decomposition - effect of employment on each item (M1-M11), Holm/Bonferroni-adjusted p-values
 ***   PART F: Heterogeneity - group x household type / children (Wald tests, Holm-adjusted), AMEs by household type
 ***   PART G: Household structure and poverty risk - children vs. adults (M1-M4), pre and post, per group; test children = adults
 ***   PART H: Sector within IWP Employees - IWP rate and SMD by sector (sector exists only for persons with a job)
@@ -266,12 +266,12 @@ testparm i.smd_grp#i.year
 
 
 *******************************************************************************************************************************************************************************************
-*** PART E: Item decomposition - employment effect on each item (M1 and M11)
+*** PART E: Item decomposition - employment effect on each item (M1-M11, one table per model)
 *******************************************************************************************************************************************************************************************
 
 di _n(2) as result "=================== PART E: Item decomposition ==================="
 
-foreach m in 1 11 {
+forvalues m = 1/11 {
     di _n as result "--- Items, M`m': `c`m'' ---"
     foreach y in `items13' `items_arr' {
         grp_effect `y', sample(s_main) group(smd_grp) controls(`c`m'')
@@ -453,7 +453,8 @@ use `res_effects', clear
 gen byte main13 = (part == "E_items" & !inlist(outcome, "dep_arr_rent", "dep_arr_util", "dep_arr_loan"))
 gen double p_bonf = .
 gen double p_holm = .
-foreach m in M1 M11 {
+forvalues mm = 1/11 {
+    local m "M`mm'"
     preserve
     keep if main13 == 1 & spec == "`m'"
     local k = _N
@@ -473,6 +474,15 @@ foreach m in M1 M11 {
 }
 order part outcome spec n or or_lo or_hi p p_holm p_bonf s_iwp s_axi pp pp_se rel rel_se
 list part outcome spec or p p_holm s_iwp s_axi pp rel, noobs abbreviate(8) separator(0)
+
+* Full item tables per model (input for the LaTeX tables)
+gen int spec_n = real(subinstr(spec, "M", "", .))
+sort spec_n outcome
+forvalues mm = 1/11 {
+    di _n as result "--- Item table M`mm' ---"
+    list outcome n s_iwp s_axi pp pp_se rel rel_se or p p_holm if part == "E_items" & spec_n == `mm', noobs abbreviate(10) separator(0) clean
+}
+drop spec_n
 export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("CE_effects", replace) firstrow(variables)
 
 * F: heterogeneity tests; Holm and Bonferroni across the 13 items (index excluded)

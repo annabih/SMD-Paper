@@ -14,7 +14,13 @@
 ***   - Poverty threshold NOT computed from the panel sample (not cross-sectionally representative):
 ***     taken by year from the cross-sectional pipeline (60% of weighted median). Years without a
 ***     cross-sectional threshold get no poverty status.
-***   - Old-age benefit recipients (PY100G > 0) excluded from the SMD comparison groups
+***   - AROP w/o IWP as in all cross-sectional analyses: not working >= 7 months in any status, 18-64,
+***     without old-age benefit recipients (PY100G > 0); identical in transitions, FE models and persistence
+***   - Controls as in the cross-sectional deprivation models (M1-M12): age group, sex, household type (9),
+***     income position, education (ISCED 3 groups), region (NUTS 1), urbanisation, health (PH010), limitation (PH030);
+***     missing values as own category (9). Current economic status harmonised from PL031/PL032 (act_status)
+***   - Limitation: the cross-sectional scripts use RX060 as provided (SMD until 2020, SMSD from 2021);
+***     the longitudinal UDB has no RX060, so SMSD (13 items) is rebuilt for all years
 *******************************************************************************************************************************************************************************************
 clear all
 set more off
@@ -37,7 +43,7 @@ use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/
 * Destring (decimal comma -> point); create empty variable if not available
 ********************************************************************************
 
-local numvars "RB060 RB062 RB063 RB064 RB080 RB090 RB110 RX010 HY020 HY022 HX050 PY100G PL211A PL211B PL211C PL211D PL211E PL211F PL211G PL211H PL211I PL211J PL211K PL211L HS011 HS021 HS031 HS040 HS050 HS060 HH050 HS110 HD080 PD020 PD030 PD050 PD060 PD070 PD080"
+local numvars "RB060 RB062 RB063 RB064 RB080 RB090 RB110 RX010 HY020 HY022 HX050 PY100G PL211A PL211B PL211C PL211D PL211E PL211F PL211G PL211H PL211I PL211J PL211K PL211L HS011 HS021 HS031 HS040 HS050 HS060 HH050 HS110 HD080 PD020 PD030 PD050 PD060 PD070 PD080 DB100 PE040 PE041 PH010 PH030 PL031 PL032"
 
 foreach var of local numvars {
     capture confirm variable `var'
@@ -99,6 +105,91 @@ gen byte oldage_ben = (PY100G > 0 & !missing(PY100G))
 label variable oldage_ben "Receives old-age benefits (PY100G > 0)"
 
 ********************************************************************************
+* Controls (as in the cross-sectional deprivation models); missing = own category 9
+* Variable versions change in 2021 (PE040 -> PE041, PL031 -> PL032). Releases from 2021 may also report
+* earlier years in the new variable (with the old coding) -> fall back to the other variable if missing
+********************************************************************************
+
+gen byte age_grp = .
+replace age_grp = 1 if inrange(dag, 18, 29)
+replace age_grp = 2 if inrange(dag, 30, 44)
+replace age_grp = 3 if inrange(dag, 45, 54)
+replace age_grp = 4 if inrange(dag, 55, 64)
+label define agegrp 1 "18-29" 2 "30-44" 3 "45-54" 4 "55-64"
+label values age_grp agegrp
+
+* Education (ISCED): 1 = ISCED 0-2, 2 = ISCED 3-4, 3 = ISCED 5+
+gen educ_isced = PE040 if year <= 2020
+replace educ_isced = PE041 if year >= 2021
+replace educ_isced = PE041 if missing(educ_isced) & year <= 2020
+replace educ_isced = PE040 if missing(educ_isced) & year >= 2021
+gen byte educ3 = 9
+replace educ3 = 1 if inrange(educ_isced, 0, 299)
+replace educ3 = 2 if inrange(educ_isced, 300, 499)
+replace educ3 = 3 if educ_isced >= 500 & !missing(educ_isced)
+label define educ3lbl 1 "ISCED 0-2" 2 "ISCED 3-4" 3 "ISCED 5+" 9 "Missing"
+label values educ3 educ3lbl
+
+* Region NUTS 1 (DB040, string)
+capture confirm variable DB040
+if _rc != 0 {
+    gen str3 DB040 = ""
+}
+capture confirm string variable DB040
+if _rc != 0 {
+    tostring DB040, replace force
+}
+gen byte region = 9
+replace region = 1 if strtrim(DB040) == "AT1"
+replace region = 2 if strtrim(DB040) == "AT2"
+replace region = 3 if strtrim(DB040) == "AT3"
+label define regionlbl 1 "AT1 East" 2 "AT2 South" 3 "AT3 West" 9 "Missing"
+label values region regionlbl
+
+* Degree of urbanisation (DB100)
+gen byte urban = DB100 if inlist(DB100, 1, 2, 3)
+replace urban = 9 if missing(urban)
+label define urbanlbl 1 "Cities" 2 "Towns and suburbs" 3 "Rural areas" 9 "Missing"
+label values urban urbanlbl
+
+* Health (PH010 bad / very bad) and limitation in activities (PH030)
+gen byte health_bad = (inlist(PH010, 4, 5)) if inlist(PH010, 1, 2, 3, 4, 5)
+replace health_bad = 9 if missing(health_bad)
+label define healthlbl 0 "Very good to fair" 1 "Bad / very bad" 9 "Missing"
+label values health_bad healthlbl
+gen byte limit = PH030 if inlist(PH030, 1, 2, 3)
+replace limit = 9 if missing(limit)
+label define limitlbl 1 "Severely limited" 2 "Limited" 3 "Not limited" 9 "Missing"
+label values limit limitlbl
+
+* Current economic status, harmonised (as in the cross-sectional "Prepair EU-Silc Files")
+gen ecs_old = PL031
+replace ecs_old = PL032 if missing(ecs_old) & year <= 2020
+gen ecs_new = PL032
+gen byte act_status = 9
+replace act_status = 1 if year <= 2020 & inlist(ecs_old, 1, 2, 3, 4)
+replace act_status = 2 if year <= 2020 & ecs_old == 5
+replace act_status = 3 if year <= 2020 & ecs_old == 6
+replace act_status = 4 if year <= 2020 & ecs_old == 7
+replace act_status = 5 if year <= 2020 & ecs_old == 8
+replace act_status = 6 if year <= 2020 & ecs_old == 10
+replace act_status = 7 if year <= 2020 & inlist(ecs_old, 9, 11)
+replace act_status = 1 if year >= 2021 & ecs_new == 1
+replace act_status = 2 if year >= 2021 & ecs_new == 2
+replace act_status = 3 if year >= 2021 & ecs_new == 5
+replace act_status = 4 if year >= 2021 & ecs_new == 3
+replace act_status = 5 if year >= 2021 & ecs_new == 4
+replace act_status = 6 if year >= 2021 & ecs_new == 6
+replace act_status = 7 if year >= 2021 & inlist(ecs_new, 7, 8)
+drop ecs_old ecs_new
+label define actlbl 1 "Employed (current)" 2 "Unemployed" 3 "Pupil/student/training" 4 "Retired/early retired" 5 "Disabled/unable to work" 6 "Domestic tasks/care" 7 "Other inactive" 9 "Missing"
+label values act_status actlbl
+
+tab year educ3 if inrange(dag, 18, 64), missing
+tab year health_bad if inrange(dag, 18, 64), missing
+tab year act_status if inrange(dag, 18, 64) & any_worker == 0 & oldage_ben == 0, missing
+
+********************************************************************************
 * SMSD rebuilt from the 13 items (1 = lacking because cannot afford)
 ********************************************************************************
 
@@ -146,9 +237,22 @@ tab year arop_post_rel, missing
 bysort release year idhh: egen n_children = total(dag < 14 & !missing(dag))
 bysort release year idhh: egen n_adults = total(dag >= 14 & !missing(dag))
 
+gen byte hh_type = .
+replace hh_type = 1 if n_adults == 1 & n_children == 0
+replace hh_type = 2 if n_adults == 1 & n_children == 1
+replace hh_type = 3 if n_adults == 1 & n_children >= 2
+replace hh_type = 4 if n_adults == 2 & n_children == 0
+replace hh_type = 5 if n_adults == 2 & n_children == 1
+replace hh_type = 6 if n_adults == 2 & n_children == 2
+replace hh_type = 7 if n_adults == 2 & n_children >= 3
+replace hh_type = 8 if n_adults >= 3 & n_children == 0
+replace hh_type = 9 if n_adults >= 3 & n_children >= 1
+label define hhtypelbl 1 "1 adult" 2 "1 adult + 1 child" 3 "1 adult + 2+ children" 4 "2 adults" 5 "2 adults + 1 child" 6 "2 adults + 2 children" 7 "2 adults + 3+ children" 8 "3+ adults" 9 "3+ adults + children"
+label values hh_type hhtypelbl
+
 ********************************************************************************
 * Groups and states (post-transfer, age 18-64)
-* smd_grp: 1 = IWP Employees, 0 = AROP w/o IWP (both without old-age benefit recipients) - as cross-sectional
+* smd_grp: 1 = IWP Employees, 0 = AROP w/o IWP (both 18-64, without old-age benefit recipients) - identical to all cross-sectional analyses
 * state:   1 = IWP Employee, 2 = AROP w/o IWP, 3 = not poor, 4 = other (poor self-employed, mixed, old-age benefits)
 ********************************************************************************
 

@@ -10,6 +10,7 @@
 ***   PART G: Household structure and poverty risk - children vs. adults (M1-M4), pre and post, per group; test children = adults
 ***   PART G2: Household structure and SMD - children vs. adults within IWP Employees and AROP w/o IWP (year FE; + income position), +1 effects in pp and %, group interaction tests
 ***   PART H: Sector within IWP Employees - IWP rate and SMD by sector (sector exists only for persons with a job)
+***   PART I: Robustness - AROP w/o IWP without students (R2) and unemployed only (R3); SMD M1/M5/M11/M12, items M1/M12
 *** Groups: smd_grp (script 03): 1 = IWP Employees, 0 = AROP w/o IWP; both 18-64, post-transfer, without old-age benefit recipients
 *** Outcome: smd = RX060 as provided in the UDB
 *** Survey design: svyset hh_cl [pw=dwt] (household cluster, idhh unique within year)
@@ -539,6 +540,53 @@ margins sector, subpop(s_emp) vce(unconditional)
 
 
 *******************************************************************************************************************************************************************************************
+*** PART I: Robustness - composition of AROP w/o IWP
+*** Students are about one fifth of AROP w/o IWP and have a very low SMD rate -> does the employment gap depend on them?
+***   R1 main sample (reference)
+***   R2 without students in AROP w/o IWP (act_status == 3 dropped from the comparison group)
+***   R3 AROP w/o IWP restricted to the unemployed (act_status == 2): strictest comparison, both groups attached to the labour market
+*** SMD: M1, M5 (income position), M11, M12; 13 items: M1 and M12 (Holm/Bonferroni in the export)
+*** act_status harmonised from PL031 (until 2020) and PL032 (from 2021), see "Prepair EU-Silc Files"
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART I: Robustness - composition of AROP w/o IWP ==================="
+
+capture drop s_r1 s_r2 s_r3
+gen byte s_r1 = s_main
+gen byte s_r2 = (s_main == 1 & !(smd_grp == 0 & act_status == 3))
+gen byte s_r3 = (s_main == 1 & (smd_grp == 1 | (smd_grp == 0 & act_status == 2)))
+label variable s_r1 "R1 main sample"
+label variable s_r2 "R2 without students in AROP w/o IWP"
+label variable s_r3 "R3 AROP w/o IWP = unemployed only"
+
+* Sample sizes and SMD rate by group per sample
+forvalues r = 1/3 {
+    di _n as result "--- R`r': N and SMD rate by group ---"
+    table smd_grp if s_r`r' == 1 [aw=dwt], statistic(mean smd) statistic(frequency) nformat(%9.4f mean)
+}
+
+tempname prb
+tempfile res_rob
+postfile `prb' str4 sample str16 outcome str4 spec double(n or or_lo or_hi p s_iwp s_axi pp pp_se rel rel_se) using `res_rob', replace
+
+forvalues r = 1/3 {
+    foreach m in 1 5 11 12 {
+        di _n as result "--- R`r' SMD, M`m': `c`m'' ---"
+        grp_effect smd, sample(s_r`r') group(smd_grp) controls(`c`m'')
+        post `prb' ("R`r'") ("smd") ("M`m'") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+    }
+    foreach m in 1 12 {
+        di _n as result "--- R`r' items, M`m' ---"
+        foreach y of local items13 {
+            grp_effect `y', sample(s_r`r') group(smd_grp) controls(`c`m'')
+            post `prb' ("R`r'") ("`y'") ("M`m'") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+        }
+    }
+}
+postclose `prb'
+
+
+*******************************************************************************************************************************************************************************************
 *** Export results to Excel (one sheet per part), incl. Holm/Bonferroni adjustment
 *******************************************************************************************************************************************************************************************
 
@@ -616,6 +664,37 @@ export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. 
 use `res_g2e', clear
 list, noobs abbreviate(10) sepby(group variant)
 export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("G2_smd_effects", replace) firstrow(variables)
+
+* I: robustness without students / unemployed only; Holm and Bonferroni across the 13 items within sample x model
+use `res_rob', clear
+gen byte item = (outcome != "smd")
+gen double p_bonf = .
+gen double p_holm = .
+gen long ord = _n
+foreach r in R1 R2 R3 {
+    foreach m in M1 M12 {
+        preserve
+        keep if item == 1 & sample == "`r'" & spec == "`m'"
+        local k = _N
+        sort p
+        gen double holm = (`k' - _n + 1) * p
+        replace holm = max(holm, holm[_n - 1]) if _n > 1
+        replace holm = min(holm, 1)
+        gen double bonf = min(`k' * p, 1)
+        keep ord holm bonf
+        tempfile hb
+        save `hb'
+        restore
+        merge 1:1 ord using `hb', nogenerate update
+        replace p_holm = holm if !missing(holm)
+        replace p_bonf = bonf if !missing(bonf)
+        drop holm bonf
+    }
+}
+sort ord
+drop ord item
+list sample outcome spec n s_iwp s_axi pp pp_se rel p p_holm, noobs abbreviate(10) sepby(sample spec)
+export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("I_robustness", replace) firstrow(variables)
 
 di as result "=== FERTIG ==="
 

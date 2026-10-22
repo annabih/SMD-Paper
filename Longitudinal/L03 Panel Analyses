@@ -254,6 +254,7 @@ restore
 *** PART D: Persistence over four years
 *** Each release contributes persons observed in its last four years (release-3 ... release), weight RB064
 *** Persistent SMD (Eurostat logic): SMD in the last year and in at least 2 of the 3 preceding years
+*** SMSD exists from 2018 -> first usable window is release 2021 (2018-2021)
 *******************************************************************************************************************************************************************************************
 
 di _n(2) as result "=================== PART D: Persistence ==================="
@@ -292,10 +293,16 @@ table history [aw=RB064], statistic(mean persistent_smd) statistic(mean smd_year
 *** IWP vs. AxI (state in last year): persistent SMD, pp difference and relative change
 capture drop g
 gen byte g = (state == 1) if inlist(state, 1, 2)
-logit persistent_smd i.g i.release [pw=RB064], vce(cluster pid)
-margins g, post
-lincom 100 * _b[1.g] - 100 * _b[0bn.g]
-nlcom (rel_change_pct: 100 * (_b[1.g] / _b[0bn.g] - 1))
+tab g persistent_smd
+capture noisily logit persistent_smd i.g i.release [pw=RB064], vce(cluster pid)
+if _rc == 0 {
+    margins g, post
+    lincom 100 * _b[1.g] - 100 * _b[0bn.g]
+    nlcom (rel_change_pct: 100 * (_b[1.g] / _b[0bn.g] - 1))
+}
+else {
+    di as error "Persistence model not estimable (too few persons with four valid SMSD years)"
+}
 
 di as result "=== FERTIG ==="
 

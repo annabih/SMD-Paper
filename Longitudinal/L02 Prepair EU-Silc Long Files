@@ -8,8 +8,10 @@
 ***   - PL073-PL076 are not in the longitudinal UDB -> months from the monthly activity calendar PL211A-PL211L
 ***     (income reference year): codes 1-2 = employee, 3-4 = self-employed
 ***   - worker = >= 7 months as employee, age 18-64; any_worker = >= 7 months in any status, age 18-64
-***   - RX060 / HX080 are not in the longitudinal UDB -> SMSD rebuilt from the 13 items (>= 7 of 13 lacking);
-***     same definition in all years
+***   - RX060 / HX080 are not in the longitudinal UDB -> SMSD rebuilt from the 13 items (>= 7 of 13 lacking, all 13 valid);
+***     same definition in all years; available 2018-2023 (no personal items before 2018)
+***   - Variables released only for a release's final year (PD items, PE040, PL031 until 2020) are filled from the
+***     release in which that person-year is the final year (same answers)
 ***   - Income: post = HY020 / HX050, pre = HY022 / HX050 (monthly, bounded at 0)
 ***   - Poverty threshold NOT computed from the panel sample (not cross-sectionally representative):
 ***     taken by year from the cross-sectional pipeline (60% of weighted median). Years without a
@@ -58,6 +60,35 @@ foreach var of local numvars {
         gen double `var' = .
         di as text "`var' not found, created as missing"
     }
+}
+
+********************************************************************************
+* Fill variables across releases (diagnostics L02b)
+* The same person-year appears in up to four releases. Until 2020, several variables are only released
+* for the final (cross-sectional) year of each release and are missing for the earlier years:
+*   personal deprivation items PD020-PD080 (2018-2020), education PE040, economic status PL031;
+*   DB040 / DB100 are missing for part of release 2023.
+* Survey answers for a person-year do not differ between releases -> take the value from any release
+********************************************************************************
+
+foreach v in HS011 HS021 HS031 HS040 HS050 HS060 HH050 HS110 HD080 PD020 PD030 PD050 PD060 PD070 PD080 PE040 PE041 PL031 PL032 PH010 PH030 DB100 {
+    capture drop fill_tmp
+    bysort idperson year: egen fill_tmp = max(`v')
+    quietly count if missing(`v') & !missing(fill_tmp)
+    di as text "`v': " r(N) " person-year-release values filled from another release"
+    replace `v' = fill_tmp if missing(`v')
+    drop fill_tmp
+}
+capture confirm variable DB040
+if _rc == 0 {
+    capture confirm string variable DB040
+    if _rc != 0 {
+        tostring DB040, replace force
+    }
+    replace DB040 = strtrim(DB040)
+    replace DB040 = "" if DB040 == "."
+    gsort idperson year -DB040
+    by idperson year: replace DB040 = DB040[1] if DB040 == ""
 }
 
 ********************************************************************************
@@ -209,7 +240,10 @@ gen byte dep_internet = (PD080 == 2) if inlist(PD080, 1, 2, 3)
 
 egen smsd_n = rowtotal(dep_unexpected dep_holiday dep_meal dep_warm dep_car dep_furniture dep_arrears dep_clothes dep_shoes dep_social dep_leisure dep_pocket dep_internet)
 egen smsd_valid = rownonmiss(dep_unexpected dep_holiday dep_meal dep_warm dep_car dep_furniture dep_arrears dep_clothes dep_shoes dep_social dep_leisure dep_pocket dep_internet)
-gen byte smd = (smsd_n >= 7) if smsd_valid == 13 | smsd_n >= 7
+* SMSD only if all 13 items are valid. Personal items do not exist before 2018 (2015-2017: only the 7 household
+* items) -> no SMSD for 2015-2017. (The former rule "or >= 7 lacking" classified persons lacking all 7 household
+* items as deprived in years without personal items and biased the year effects.)
+gen byte smd = (smsd_n >= 7) if smsd_valid == 13
 label variable smd "Severe material and social deprivation (13 items rebuilt, >= 7 lacking)"
 
 tab year smd, missing

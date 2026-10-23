@@ -1,0 +1,300 @@
+*******************************************************************************************************************************************************************************************
+*** Title: Quick run of PART J only (further robustness) - same code as PART J in "Deprivation Items, Households and Robustness"
+*** Use this to get the J results without re-running parts B-I
+*** Input: SILC_All_Years_Adjusted.dta | Output: J_robustness_log.txt, sheet J_robustness in 05_Deprivation_Results.xlsx
+*******************************************************************************************************************************************************************************************
+
+capture log close
+clear all
+set more off
+
+log using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/J_robustness_log.txt", text replace
+
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_All_Years_Adjusted.dta", clear
+
+*******************************************************************************************************************************************************************************************
+
+********************************************************************************
+* Destring item variables (imported as strings in script 01)
+********************************************************************************
+
+foreach var in HS011 HS021 HS031 HS040 HS050 HS060 HH050 HS110 HD080 PD020 PD030 PD050 PD060 PD070 PD080 {
+    capture confirm variable `var'
+    if _rc == 0 {
+        capture confirm string variable `var'
+        if _rc == 0 {
+            replace `var' = subinstr(`var', ",", ".", .)
+            destring `var', replace force
+        }
+    }
+    else {
+        gen double `var' = .
+        di as error "`var' not found, created as missing"
+    }
+}
+
+********************************************************************************
+* 13 SMSD items: 1 = lacking because cannot afford, 0 = has it / lacks for other reasons
+* Household items (7): HS060, HS040, arrears (HS011/HS021/HS031), HS050, HH050, HS110, HD080
+* Personal items (6): PD020, PD030, PD050, PD060, PD070, PD080
+********************************************************************************
+
+capture drop dep_*
+
+gen byte dep_unexpected = (HS060 == 2) if inlist(HS060, 1, 2)
+gen byte dep_holiday = (HS040 == 2) if inlist(HS040, 1, 2)
+gen byte dep_meal = (HS050 == 2) if inlist(HS050, 1, 2)
+gen byte dep_warm = (HH050 == 2) if inlist(HH050, 1, 2)
+gen byte dep_car = (HS110 == 2) if inlist(HS110, 1, 2, 3)
+gen byte dep_furniture = (HD080 == 2) if inlist(HD080, 1, 2, 3)
+
+* Arrears (composite): any arrears on rent/mortgage, utilities or loans; missing only if all three missing
+gen byte dep_arrears = (inlist(HS011, 1, 2) | inlist(HS021, 1, 2) | inlist(HS031, 1, 2)) if !missing(HS011) | !missing(HS021) | !missing(HS031)
+
+* Arrears sub-items (supplementary)
+gen byte dep_arr_rent = inlist(HS011, 1, 2) if inlist(HS011, 1, 2, 3)
+gen byte dep_arr_util = inlist(HS021, 1, 2) if inlist(HS021, 1, 2, 3)
+gen byte dep_arr_loan = inlist(HS031, 1, 2) if inlist(HS031, 1, 2, 3)
+
+gen byte dep_clothes = (PD020 == 2) if inlist(PD020, 1, 2, 3)
+gen byte dep_shoes = (PD030 == 2) if inlist(PD030, 1, 2, 3)
+gen byte dep_social = (PD050 == 2) if inlist(PD050, 1, 2, 3)
+gen byte dep_leisure = (PD060 == 2) if inlist(PD060, 1, 2, 3)
+gen byte dep_pocket = (PD070 == 2) if inlist(PD070, 1, 2, 3)
+gen byte dep_internet = (PD080 == 2) if inlist(PD080, 1, 2, 3)
+
+label variable dep_unexpected "Cannot face unexpected expenses (HS060)"
+label variable dep_holiday "Cannot afford one week holiday (HS040)"
+label variable dep_arrears "Arrears: rent/mortgage, utilities or loans (HS011/HS021/HS031)"
+label variable dep_meal "Cannot afford meal with meat/fish every 2nd day (HS050)"
+label variable dep_warm "Cannot keep home adequately warm (HH050)"
+label variable dep_car "Cannot afford a car (HS110)"
+label variable dep_furniture "Cannot replace worn-out furniture (HD080)"
+label variable dep_arr_rent "Arrears on rent/mortgage (HS011)"
+label variable dep_arr_util "Arrears on utility bills (HS021)"
+label variable dep_arr_loan "Arrears on loans/hire purchase (HS031)"
+label variable dep_clothes "Cannot replace worn-out clothes (PD020)"
+label variable dep_shoes "Cannot afford two pairs of shoes (PD030)"
+label variable dep_social "Cannot meet friends/family monthly (PD050)"
+label variable dep_leisure "Cannot regularly take part in leisure activity (PD060)"
+label variable dep_pocket "Cannot spend small amount on oneself (PD070)"
+label variable dep_internet "Cannot afford internet at home (PD080)"
+
+local items13 "dep_unexpected dep_holiday dep_arrears dep_meal dep_warm dep_car dep_furniture dep_clothes dep_shoes dep_social dep_leisure dep_pocket dep_internet"
+local items_arr "dep_arr_rent dep_arr_util dep_arr_loan"
+local outcomes "smd `items13' `items_arr'"
+
+* Number of lacking items (among non-missing items) - descriptive only
+egen dep_count = rowtotal(`items13')
+egen dep_valid = rownonmiss(`items13')
+replace dep_count = . if dep_valid < 13
+label variable dep_count "Number of SMSD items lacking (0-13, complete cases)"
+
+********************************************************************************
+* Samples
+********************************************************************************
+
+* Main sample: SMD comparison groups (script 03)
+capture drop s_main
+gen byte s_main = (!missing(smd_grp) & inrange(year, 2018, 2024))
+
+tab year smd_grp if s_main == 1, missing
+
+********************************************************************************
+* Survey design
+********************************************************************************
+
+capture drop hh_cl
+egen long hh_cl = group(year idhh)
+svyset hh_cl [pw=dwt], vce(linearized)
+
+********************************************************************************
+* Control specifications: one model per control variable, then all together
+* Every model contains year fixed effects
+* M1:  year FE only
+* M2:  + age group            M3:  + sex
+* M4:  + household type       M5:  + income position (% of threshold) -> "beyond income"
+* M6:  + education (ISCED)    M7:  + region (NUTS 1)       M8: + degree of urbanisation
+* M9:  + general health (bad / very bad)                   M10: + limitation in activities
+* M11: all controls together
+* M12: all controls except health (M2-M8 together, without M9/M10): health may itself be a consequence of deprivation
+* Missing values of education, urbanisation and health are an own category (constant N across models)
+********************************************************************************
+
+local c1 "i.year"
+local c2 "i.year i.age_grp"
+local c3 "i.year i.sex"
+local c4 "i.year i.hh_type"
+local c5 "i.year c.inc_rel"
+local c6 "i.year i.educ3"
+local c7 "i.year i.region"
+local c8 "i.year i.urban"
+local c9 "i.year i.health_bad"
+local c10 "i.year i.limit"
+local c11 "i.year i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban i.health_bad i.limit"
+local c12 "i.year i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban"
+
+********************************************************************************
+* Helper program: group effect of a binary group variable on a binary outcome
+* Returns OR (95% CI, p), average predicted shares per group, pp difference and relative change (with SE)
+********************************************************************************
+
+capture program drop grp_effect
+program define grp_effect, rclass
+    syntax varname, SAMPle(varname) GRoup(varname) [CONTRols(string)]
+    quietly svy, subpop(`sample'): logit `varlist' i.`group' `controls'
+    local b = _b[1.`group']
+    local se = _se[1.`group']
+    local df = e(df_r)
+    local n = e(N_sub)
+    local crit = invttail(`df', 0.025)
+    local or = exp(`b')
+    local or_lo = exp(`b' - `crit' * `se')
+    local or_hi = exp(`b' + `crit' * `se')
+    local p = 2 * ttail(`df', abs(`b' / `se'))
+    quietly margins `group', subpop(`sample') vce(unconditional) post
+    local s1 = 100 * _b[1.`group']
+    local s0 = 100 * _b[0bn.`group']
+    quietly lincom 100 * _b[1.`group'] - 100 * _b[0bn.`group']
+    local pp = r(estimate)
+    local pp_se = r(se)
+    quietly nlcom (rel: 100 * (_b[1.`group'] / _b[0bn.`group'] - 1))
+    tempname rb rV
+    matrix `rb' = r(b)
+    matrix `rV' = r(V)
+    local rel = `rb'[1, 1]
+    local rel_se = sqrt(`rV'[1, 1])
+    di as text %-16s "`varlist'" " OR " %6.3f `or' " [" %5.3f `or_lo' "; " %5.3f `or_hi' "] p=" %6.4f `p' " | IWP " %6.2f `s1' "% AxI " %6.2f `s0' "% | " %7.2f `pp' " pp (SE " %4.2f `pp_se' ") | " %7.1f `rel' " % (SE " %4.1f `rel_se' ") | N=" `n'
+    return scalar n = `n'
+    return scalar or = `or'
+    return scalar or_lo = `or_lo'
+    return scalar or_hi = `or_hi'
+    return scalar p = `p'
+    return scalar s_iwp = `s1'
+    return scalar s_axi = `s0'
+    return scalar pp = `pp'
+    return scalar pp_se = `pp_se'
+    return scalar rel = `rel'
+    return scalar rel_se = `rel_se'
+end
+*******************************************************************************************************************************************************************************************
+*** PART J: Further robustness of the headline effect (reviewer checks)
+***   J1 health block in M11: joint Wald test of self-rated health and activity limitation
+***   J2 M12 estimated on the M11 sample (difference M12 vs. M11 not driven by the few cases dropped in M11)
+***   J3 flexible income control instead of the linear income position in M12:
+***      J3a income bands (< 40, 40-60, 60-80, >= 80 % of the poverty line), J3b restricted cubic spline (4 knots),
+***      J3c common income range: only persons between 50 and 100 % of the poverty line
+***   J4 R4 AROP w/o IWP without persons currently employed at the interview (act_status == 1)
+***   J5 wealth proxies (EU-SILC has no wealth variable): M13a = M12 + tenure (HH021);
+***      M13 = M13a + capital income (HY090G > 0) + rental income (HY040G > 0); M13h = M13 + health
+***      capital income is close to the outcome (savings <-> coping with unexpected expenses) -> M13a is the main variant
+***   J6 SMSD without the arrears item (12 items, >= 7 lacking): tenure mechanically affects mortgage/rent arrears
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART J: Further robustness ==================="
+
+tempname pj
+tempfile res_j
+postfile `pj' str6 check str16 outcome str8 spec double(n or or_lo or_hi p s_iwp s_axi pp pp_se rel rel_se) using `res_j', replace
+
+*** J1: joint test of the health block in M11
+di _n as result "--- J1: Wald test health block in M11 ---"
+svy, subpop(s_main): logit smd i.smd_grp `c11'
+testparm i.health_bad i.limit
+capture drop s_m11
+gen byte s_m11 = (s_main == 1 & e(sample) == 1)
+
+*** J2: M12 on the M11 sample
+di _n as result "--- J2: M12 and M11 on the identical sample ---"
+foreach m in 12 11 {
+    grp_effect smd, sample(s_m11) group(smd_grp) controls(`c`m'')
+    post `pj' ("J2") ("smd") ("M`m'") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+}
+
+*** J3: flexible income control
+capture drop inc_band inc_sp*
+gen byte inc_band = 1 if inc_rel < 40
+replace inc_band = 2 if inc_rel >= 40 & inc_rel < 60
+replace inc_band = 3 if inc_rel >= 60 & inc_rel < 80
+replace inc_band = 4 if inc_rel >= 80 & !missing(inc_rel)
+label define incband 1 "< 40 %" 2 "40-60 %" 3 "60-80 %" 4 ">= 80 %"
+label values inc_band incband
+di _n as result "--- J3: income bands by group (weighted, column %) ---"
+svy, subpop(s_main): tabulate inc_band smd_grp, column percent
+mkspline inc_sp = inc_rel if s_main == 1, cubic nknots(4)
+local c12_base "i.year i.age_grp i.sex i.hh_type i.educ3 i.region i.urban"
+capture drop s_cs
+gen byte s_cs = (s_main == 1 & inrange(inc_rel, 50, 100))
+di _n as result "--- J3: M12 with flexible income control ---"
+grp_effect smd, sample(s_main) group(smd_grp) controls(`c12_base' i.inc_band)
+post `pj' ("J3a") ("smd") ("M12band") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+grp_effect smd, sample(s_main) group(smd_grp) controls(`c12_base' inc_sp1 inc_sp2 inc_sp3)
+post `pj' ("J3b") ("smd") ("M12spl") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+foreach m in 1 12 {
+    grp_effect smd, sample(s_cs) group(smd_grp) controls(`c`m'')
+    post `pj' ("J3c") ("smd") ("M`m'") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+}
+
+*** J4: without NEP currently employed at the interview
+capture drop s_r4
+gen byte s_r4 = (s_main == 1 & !(smd_grp == 0 & act_status == 1))
+di _n as result "--- J4: R4 without currently employed NEP ---"
+table smd_grp if s_r4 == 1 [aw=dwt], statistic(mean smd) statistic(frequency) nformat(%9.4f mean)
+foreach m in 1 5 11 12 {
+    grp_effect smd, sample(s_r4) group(smd_grp) controls(`c`m'')
+    post `pj' ("J4") ("smd") ("M`m'") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+}
+
+*** J5 / J6: wealth proxies and SMSD without arrears
+foreach v in HH021 HY090G HY040G {
+    capture confirm variable `v'
+    if _rc != 0 {
+        di as error "`v' not in the dataset - add it in the merge script"
+        gen double `v' = .
+    }
+    capture confirm string variable `v'
+    if _rc == 0 {
+        replace `v' = subinstr(`v', ",", ".", .)
+        destring `v', replace force
+    }
+}
+capture drop tenure cap_inc rent_inc
+gen byte tenure = 9
+replace tenure = 1 if HH021 == 1
+replace tenure = 2 if HH021 == 2
+replace tenure = 3 if HH021 == 3
+replace tenure = 4 if inlist(HH021, 4, 5)
+label define tenlbl 1 "Owner, no mortgage" 2 "Owner, mortgage" 3 "Tenant, market rent" 4 "Reduced rent / rent free" 9 "Missing"
+label values tenure tenlbl
+gen byte cap_inc = (HY090G > 0 & !missing(HY090G))
+gen byte rent_inc = (HY040G > 0 & !missing(HY040G))
+di _n as result "--- J5: wealth proxies by group ---"
+svy, subpop(s_main): tabulate tenure smd_grp, column percent
+table smd_grp if s_main == 1 [aw=dwt], statistic(mean cap_inc rent_inc) nformat(%9.3f mean)
+
+capture drop n12 v12 smd12
+egen n12 = rowtotal(dep_unexpected dep_holiday dep_meal dep_warm dep_car dep_furniture dep_clothes dep_shoes dep_social dep_leisure dep_pocket dep_internet)
+egen v12 = rownonmiss(dep_unexpected dep_holiday dep_meal dep_warm dep_car dep_furniture dep_clothes dep_shoes dep_social dep_leisure dep_pocket dep_internet)
+gen byte smd12 = (n12 >= 7) if v12 == 12
+label variable smd12 "SMSD without arrears (12 items, >= 7 lacking)"
+
+local c13a "`c12' i.tenure"
+local c13 "`c12' i.tenure i.cap_inc i.rent_inc"
+local c13h "`c13' i.health_bad i.limit"
+foreach y in smd smd12 {
+    foreach m in 12 13a 13 13h {
+        di _n as result "--- J5/J6 `y', M`m' ---"
+        grp_effect `y', sample(s_main) group(smd_grp) controls(`c`m'')
+        post `pj' ("J5") ("`y'") ("M`m'") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+    }
+}
+di _n as result "--- J5: full M13 (odds ratios of the wealth proxies) ---"
+svy, subpop(s_main): logit smd i.smd_grp `c13', or
+postclose `pj'
+
+use `res_j', clear
+list check outcome spec n s_iwp s_axi pp pp_se rel p, noobs abbreviate(10) sepby(check)
+export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("J_robustness", replace) firstrow(variables)
+
+di as result "=== FERTIG ==="
+log close

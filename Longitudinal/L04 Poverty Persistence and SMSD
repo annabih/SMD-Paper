@@ -1,0 +1,184 @@
+*******************************************************************************************************************************************************************************************
+*** Title: Poverty persistence as a mechanism - does prior poverty explain the IWP-NEP gap in SMSD?
+*** Aim: Link poverty duration directly to SMSD within the same persons (longitudinal UDB)
+***   Idea: IWP Employees are poor for shorter periods than the non-employed poor (L03). If shorter poverty means
+***   fewer depleted resources, (a) prior poverty should raise SMSD and (b) controlling for prior poverty should
+***   reduce the IWP-NEP gap in SMSD. Descriptive mediation logic, no causal claim.
+***   PART A: Two-year pairs (each release's last year pair t-1 -> t, weight RB062)
+***           A1 prior poverty (poor in t-1) by group in t
+***           A2 SMSD in t by group x prior poverty
+***           A3 logit models: gap IWP - NEP (pp and %) without / with prior poverty and prior income position
+***              L1 year | L2 + controls in t (as M12) | L3 + poor in t-1 | L4 + income position in t-1 | L5 L2 + both
+***           A4 interaction group x prior poverty: is the IWP-NEP gap different for the newly and the persistently poor?
+***   PART B: Three-year windows (each release's last three years, weight RB063): number of poor years in t-2 and t-1
+***           (0 / 1 / 2) -> SMSD in t, by group, and the gap with this control (small N, descriptive check)
+*** Sample: persons 18-64 who are IWP Employees (smd_grp == 1) or AROP w/o IWP / NEP (smd_grp == 0) in year t
+***   (post-transfer, as in all cross-sectional analyses), valid SMSD in t (13 items, available 2018-2023)
+***   -> t = 2019-2023 (releases 2019-2023)
+*** Controls (M12 without health): age group, sex, household type, income position in t, education, region, urbanisation
+*** Standard errors clustered by household (release x household ID)
+*** Input: SILC_Long_Prepared.dta (L02)
+*** Output: L04_Persistence_SMSD_log.txt, L04_Persistence_SMSD.xlsx
+*******************************************************************************************************************************************************************************************
+
+capture log close
+clear all
+set more off
+
+log using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/L04_Persistence_SMSD_log.txt", text replace
+
+* AME of being an IWP Employee (vs. NEP): pp and % of the NEP rate, delta-method SE; posts one row to the results file
+capture program drop ame_iwp
+program define ame_iwp
+    args part model sub
+    quietly margins smd_grp, subpop(`sub') vce(unconditional) post
+    local r0 = 100 * _b[0.smd_grp]
+    local r1 = 100 * _b[1.smd_grp]
+    quietly nlcom (pp: 100 * (_b[1.smd_grp] - _b[0.smd_grp])) (rel: 100 * (_b[1.smd_grp] / _b[0.smd_grp] - 1)), post
+    local pp = _b[pp]
+    local pp_se = _se[pp]
+    local rel = _b[rel]
+    local rel_se = _se[rel]
+    local p = 2 * normal(-abs(`pp' / `pp_se'))
+    di as text %-4s "`model'" "  IWP " %5.1f `r1' "  NEP " %5.1f `r0' "  diff " %6.2f `pp' " pp (SE " %4.2f `pp_se' ")  " %6.1f `rel' " % (SE " %4.1f `rel_se' ")  p=" %6.4f `p'
+    post res ("`part'") ("`model'") (`r1') (`r0') (`pp') (`pp_se') (`rel') (`rel_se') (`p')
+end
+
+tempfile results
+postfile res str10 part str6 model double(s_iwp s_nep pp pp_se rel rel_se p) using `results', replace
+
+local ctrl "i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban"
+
+
+*******************************************************************************************************************************************************************************************
+*** PART A: Two-year pairs t-1 -> t
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART A: two-year pairs (RB062) ==================="
+
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Prepared.dta", clear
+
+* Previous-year values of the same person within the same release
+bysort release pid (year): gen byte poor_lag = arop_post_rel[_n - 1] if year[_n - 1] == year - 1
+bysort release pid (year): gen double inc_rel_lag = inc_rel[_n - 1] if year[_n - 1] == year - 1
+bysort release pid (year): gen byte state_lag = state[_n - 1] if year[_n - 1] == year - 1
+label variable poor_lag "At risk of poverty in t-1 (post-transfer)"
+label variable inc_rel_lag "Income position in t-1 (% of poverty threshold)"
+label define poorlag 0 "Not poor in t-1 (newly poor)" 1 "Poor in t-1 (persistently poor)"
+label values poor_lag poorlag
+
+* Each release contributes its last year pair (as in L03 part B)
+keep if year == release & RB062 > 0 & !missing(RB062)
+gen byte s_a = inlist(smd_grp, 0, 1) & !missing(smd, poor_lag, inc_rel_lag, inc_rel)
+
+capture drop hh_cl
+egen long hh_cl = group(release idhh)
+svyset hh_cl [pw=RB062], vce(linearized)
+
+di _n as result "--- Sample: unweighted N by year and group ---"
+tab year smd_grp if s_a == 1
+tab smd_grp poor_lag if s_a == 1
+
+*** A1: prior poverty by group (path a: are IWP less often persistently poor?)
+di _n as result "--- A1: share poor in t-1 by group in t (weighted, row %) ---"
+tab smd_grp poor_lag if s_a == 1 [aw=RB062], row nofreq
+svy, subpop(s_a): regress poor_lag i.smd_grp i.year
+di as text "Difference IWP - NEP in the share poor in t-1 (pp): " %6.2f 100 * _b[1.smd_grp] " (SE " %5.2f 100 * _se[1.smd_grp] ")"
+di _n as result "--- A1: group in t-1 by group in t (weighted, row %) ---"
+tab smd_grp state_lag if s_a == 1 [aw=RB062], row nofreq
+di _n as result "--- A1: income position in t-1 and t by group (weighted means) ---"
+table smd_grp if s_a == 1 [aw=RB062], statistic(mean inc_rel_lag inc_rel) statistic(p50 inc_rel_lag inc_rel) nformat(%9.1f mean p50)
+
+*** A2: SMSD by group x prior poverty (path b: is SMSD higher among the persistently poor?)
+di _n as result "--- A2: SMSD in t by group and prior poverty (weighted mean, unweighted N) ---"
+table smd_grp poor_lag if s_a == 1 [aw=RB062], statistic(mean smd) statistic(frequency) nformat(%9.3f mean)
+table poor_lag if s_a == 1 [aw=RB062], statistic(mean smd) statistic(frequency) nformat(%9.3f mean)
+
+*** A3: gap IWP - NEP without and with prior poverty / prior income position (same sample in all models)
+di _n as result "--- A3: IWP - NEP gap in SMSD (AME), models L1-L5 ---"
+svy, subpop(s_a): logit smd i.smd_grp i.year
+estimates store L1
+ame_iwp "A_2yr" "L1" s_a
+
+estimates restore L1
+svy, subpop(s_a): logit smd i.smd_grp i.year `ctrl'
+estimates store L2
+ame_iwp "A_2yr" "L2" s_a
+
+svy, subpop(s_a): logit smd i.smd_grp i.year `ctrl' i.poor_lag
+estimates store L3
+ame_iwp "A_2yr" "L3" s_a
+estimates restore L3
+di as text "Odds ratio of being poor in t-1 (L3):"
+lincom 1.poor_lag, eform
+
+svy, subpop(s_a): logit smd i.smd_grp i.year `ctrl' c.inc_rel_lag
+estimates store L4
+ame_iwp "A_2yr" "L4" s_a
+
+svy, subpop(s_a): logit smd i.smd_grp i.year `ctrl' i.poor_lag c.inc_rel_lag
+estimates store L5
+ame_iwp "A_2yr" "L5" s_a
+
+di _n as result "--- A3: odds ratios of the group dummy across models ---"
+estimates table L1 L2 L3 L4 L5, keep(1.smd_grp 1.poor_lag inc_rel_lag inc_rel) eform b(%9.3f) se(%9.3f) p(%9.4f) stats(N)
+
+*** A4: interaction - gap among the newly poor vs. the persistently poor
+di _n as result "--- A4: group x prior poverty ---"
+svy, subpop(s_a): logit smd i.smd_grp##i.poor_lag i.year `ctrl'
+estimates store L6
+test 1.smd_grp#1.poor_lag
+margins poor_lag, dydx(smd_grp) subpop(s_a) vce(unconditional)
+margins smd_grp#poor_lag, subpop(s_a) vce(unconditional)
+
+
+*******************************************************************************************************************************************************************************************
+*** PART B: Three-year windows - number of poor years in t-2 and t-1
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART B: three-year windows (RB063) ==================="
+
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Prepared.dta", clear
+
+bysort release pid (year): gen byte poor_l1 = arop_post_rel[_n - 1] if year[_n - 1] == year - 1
+bysort release pid (year): gen byte poor_l2 = arop_post_rel[_n - 2] if year[_n - 2] == year - 2 & year[_n - 1] == year - 1
+gen byte npoor_prev = poor_l1 + poor_l2
+label variable npoor_prev "Years at risk of poverty in t-2 and t-1 (0-2)"
+
+keep if year == release & RB063 > 0 & !missing(RB063)
+gen byte s_b = inlist(smd_grp, 0, 1) & !missing(smd, npoor_prev, inc_rel)
+
+capture drop hh_cl
+egen long hh_cl = group(release idhh)
+svyset hh_cl [pw=RB063], vce(linearized)
+
+di _n as result "--- B: unweighted N by group and prior poor years ---"
+tab smd_grp npoor_prev if s_b == 1
+di _n as result "--- B: prior poor years by group (weighted, row %) ---"
+tab smd_grp npoor_prev if s_b == 1 [aw=RB063], row nofreq
+di _n as result "--- B: SMSD in t by group and prior poor years (weighted mean, unweighted N) ---"
+table smd_grp npoor_prev if s_b == 1 [aw=RB063], statistic(mean smd) statistic(frequency) nformat(%9.3f mean)
+
+* Gap without and with the number of prior poor years (small N: check cell sizes above before interpreting)
+capture noisily {
+    svy, subpop(s_b): logit smd i.smd_grp i.year `ctrl'
+    ame_iwp "B_3yr" "L2" s_b
+    svy, subpop(s_b): logit smd i.smd_grp i.year `ctrl' i.npoor_prev
+    ame_iwp "B_3yr" "L3" s_b
+}
+
+
+*******************************************************************************************************************************************************************************************
+*** Export
+*******************************************************************************************************************************************************************************************
+
+postclose res
+use `results', clear
+di _n as result "=== Summary: IWP - NEP gap in SMSD (AME) ==="
+di as text "L1 year | L2 + controls in t (M12) | L3 L2 + poor in t-1 (part B: number of poor years in t-2, t-1) | L4 L2 + income position in t-1 | L5 L2 + both"
+list, noobs abbreviate(10) separator(0)
+export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/L04_Persistence_SMSD.xlsx", sheet("gap", replace) firstrow(variables)
+
+di as result "=== FERTIG ==="
+
+log close

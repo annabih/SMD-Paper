@@ -1,0 +1,87 @@
+*******************************************************************************************************************************************************************************************
+*** Title: Robustness M13 - does the IWP-NEP gap in SMSD survive wealth proxies?
+*** EU-SILC has no wealth variable -> proxies (all years 2018-2024, identical coding 1-5 in HH021):
+***   tenure (HH021): 1 owner without mortgage, 2 owner with mortgage, 3 tenant market rent, 4 reduced rent / rent free (4, 5)
+***   capital income (HY090G > 0): interest, dividends, profits from capital investment
+***   rental income (HY040G > 0): income from renting out property or land
+*** Models (same sample, AME of IWP vs. NEP in pp and %):
+***   M12  all controls except health (as in the paper)
+***   M13  M12 + tenure + capital income + rental income
+***   M13h M13 + health (= M11 + wealth proxies)
+*** Note: tenure mechanically affects the arrears item (outright owners have no mortgage/rent arrears)
+***   -> SMSD is also re-estimated without arrears (12 items, >= 7 lacking)
+*** Input: SILC_All_Years_Adjusted.dta | Output: M13_log.txt
+*******************************************************************************************************************************************************************************************
+
+capture log close
+clear all
+set more off
+
+log using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/M13_log.txt", text replace
+
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_All_Years_Adjusted.dta", clear
+keep if inrange(year, 2018, 2024)
+
+* Destring (decimal comma -> point)
+foreach v in HH021 HY090G HY040G {
+    capture confirm variable `v'
+    if _rc != 0 {
+        di as error "`v' not in the dataset - add it in the merge script"
+        gen double `v' = .
+    }
+    capture confirm string variable `v'
+    if _rc == 0 {
+        replace `v' = subinstr(`v', ",", ".", .)
+        destring `v', replace force
+    }
+}
+
+* Wealth proxies (missing = own category 9 / 0, so that the sample equals M12)
+gen byte tenure = 9
+replace tenure = 1 if HH021 == 1
+replace tenure = 2 if HH021 == 2
+replace tenure = 3 if HH021 == 3
+replace tenure = 4 if inlist(HH021, 4, 5)
+label define tenlbl 1 "Owner, no mortgage" 2 "Owner, mortgage" 3 "Tenant, market rent" 4 "Reduced rent / rent free" 9 "Missing"
+label values tenure tenlbl
+gen byte cap_inc = (HY090G > 0 & !missing(HY090G))
+gen byte rent_inc = (HY040G > 0 & !missing(HY040G))
+
+* SMSD without arrears (12 items, >= 7 lacking, all 12 valid)
+egen n12 = rowtotal(smi_unexpected smi_holiday smi_meal smi_warm smi_car smi_furniture smi_clothes smi_shoes smi_social smi_leisure smi_pocket smi_internet)
+egen v12 = rownonmiss(smi_unexpected smi_holiday smi_meal smi_warm smi_car smi_furniture smi_clothes smi_shoes smi_social smi_leisure smi_pocket smi_internet)
+gen byte smd12 = (n12 >= 7) if v12 == 12
+
+gen byte s_main = !missing(smd_grp, smd)
+egen long hh_cl = group(year idhh)
+svyset hh_cl [pw=dwt], vce(linearized)
+
+*** Descriptives: wealth proxies by group (weighted, column %)
+di _n as result "--- Wealth proxies by group ---"
+svy, subpop(s_main): tabulate tenure smd_grp, column percent
+table smd_grp if s_main == 1 [aw=dwt], statistic(mean cap_inc rent_inc) nformat(%9.3f mean)
+
+*** Models
+local c12 "i.year i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban"
+local c13 "`c12' i.tenure i.cap_inc i.rent_inc"
+local c13h "`c13' i.health_bad i.limit"
+
+foreach y in smd smd12 {
+    foreach m in 12 13 13h {
+        quietly svy, subpop(s_main): logit `y' i.smd_grp `c`m''
+        local orr = exp(_b[1.smd_grp])
+        local n = e(N_sub)
+        quietly margins smd_grp, subpop(s_main) vce(unconditional) post
+        local r0 = 100 * _b[0.smd_grp]
+        local r1 = 100 * _b[1.smd_grp]
+        quietly nlcom (pp: 100 * (_b[1.smd_grp] - _b[0.smd_grp])) (rel: 100 * (_b[1.smd_grp] / _b[0.smd_grp] - 1)), post
+        local p = 2 * normal(-abs(_b[pp] / _se[pp]))
+        di as text %-6s "`y'" " M" %-4s "`m'" " OR " %5.3f `orr' "  IWP " %5.1f `r1' "  NEP " %5.1f `r0' "  diff " %6.2f _b[pp] " pp (SE " %4.2f _se[pp] ")  " %6.1f _b[rel] " % (SE " %4.1f _se[rel] ")  p=" %6.4f `p' "  N=" `n'
+    }
+}
+
+*** Full M13 (odds ratios of the wealth proxies)
+svy, subpop(s_main): logit smd i.smd_grp `c13', or
+
+di as result "=== FERTIG ==="
+log close

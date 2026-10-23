@@ -1,0 +1,139 @@
+*******************************************************************************************************************************************************************************************
+*** Title: Table 1 - descriptives of the two comparison groups (IWP Employees vs. AROP w/o IWP)
+*** Aim: All numbers for Table 1 of the paper, for the SMD comparison groups (post-transfer, 18-64, without old-age benefits)
+***   A: sample size (unweighted), weighted share of the working-age population
+***   B: income position of the SAME persons before and after social transfers (% of poverty line, EUR/month)
+***      and share that would also be poor before transfers
+***   C: household composition (household type, household size, children < 14, persons 14+)
+***   D: socio-demographics (sex, age, education, region, urbanisation)
+***   E: SMSD rate (13 items, rebuilt)
+*** Every row: weighted mean/share per group, difference IWP - AxI in pp (or units) and in %, SE and p from svy regress
+*** Input: SILC_All_Years_Adjusted.dta
+*** Output: Table1_log.txt, Table1_Results.xlsx
+*******************************************************************************************************************************************************************************************
+
+capture log close
+clear all
+set more off
+
+log using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/Table1_log.txt", text replace
+
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_All_Years_Adjusted.dta", clear
+keep if inrange(year, 2018, 2024)
+
+capture drop hh_cl
+egen long hh_cl = group(year idhh)
+svyset hh_cl [pw=dwt], vce(linearized)
+
+gen byte s_t1 = !missing(smd_grp)
+
+********************************************************************************
+* A: sample
+********************************************************************************
+di _n as result "--- A: unweighted N by group ---"
+tab smd_grp if s_t1 == 1
+di _n as result "--- A: N with valid SMSD ---"
+tab smd_grp if s_t1 == 1 & !missing(smd)
+* Weighted share of all persons aged 18-64 (pooled)
+gen byte wa = inrange(dag, 18, 64)
+gen byte is_iwp = (smd_grp == 1) if wa == 1
+gen byte is_axi = (smd_grp == 0) if wa == 1
+di _n as result "--- A: share of all persons 18-64 (weighted, pooled) ---"
+sum is_iwp is_axi [aw=dwt] if wa == 1
+
+********************************************************************************
+* Variables for Table 1
+********************************************************************************
+* B: income of the same persons before and after transfers
+gen double inc_post_pct = 100 * post_disp_hh_income_equ / poverty_threshold_rel
+gen double inc_pre_pct = 100 * pre_disp_hh_income_equ / poverty_threshold_rel
+gen double inc_post_eur = post_disp_hh_income_equ * defl
+gen double inc_pre_eur = pre_disp_hh_income_equ * defl
+gen double transfer_eur = (post_disp_hh_income_equ - pre_disp_hh_income_equ) * defl
+gen byte poor_pre = (pre_disp_hh_income_equ < poverty_threshold_rel) if !missing(pre_disp_hh_income_equ)
+label variable inc_post_pct "Income after transfers, % of poverty line"
+label variable inc_pre_pct "Income before transfers, % of poverty line"
+label variable inc_post_eur "Income after transfers, EUR/month (2023 prices)"
+label variable inc_pre_eur "Income before transfers, EUR/month (2023 prices)"
+label variable transfer_eur "Social transfers (post - pre), EUR/month equivalised (2023 prices)"
+label variable poor_pre "Also at risk of poverty before transfers"
+
+* C: household composition (6 types)
+gen byte hh6 = .
+replace hh6 = 1 if hh_type == 1
+replace hh6 = 2 if inlist(hh_type, 2, 3)
+replace hh6 = 3 if hh_type == 4
+replace hh6 = 4 if inlist(hh_type, 5, 6, 7)
+replace hh6 = 5 if hh_type == 8
+replace hh6 = 6 if hh_type == 9
+label define hh6lbl 1 "Single adult" 2 "Single adult with children" 3 "Two adults" 4 "Two adults with children" 5 "Three+ adults" 6 "Three+ adults with children"
+label values hh6 hh6lbl
+forvalues k = 1/6 {
+    gen byte hh6_`k' = (hh6 == `k') if !missing(hh6)
+}
+gen byte hh_size = n_children + n_adults
+gen byte any_kids = (n_children > 0)
+
+* D: socio-demographics
+gen byte female = (sex == 2) if !missing(sex)
+forvalues k = 1/4 {
+    gen byte age_`k' = (age_grp == `k') if !missing(age_grp)
+}
+foreach k in 1 2 3 9 {
+    gen byte edu_`k' = (educ3 == `k')
+}
+foreach k in 1 2 3 {
+    gen byte reg_`k' = (region == `k')
+    gen byte urb_`k' = (urban == `k')
+}
+
+* E: SMSD
+gen byte smsd = smd
+
+********************************************************************************
+* Means by group, difference, SE and p (svy regress on group dummy)
+* Shares are reported x 100 (percent / pp)
+********************************************************************************
+tempname pt
+tempfile res
+postfile `pt' str20 var str70 label double(m_iwp m_axi diff se p rel n) using `res', replace
+
+local pctvars "poor_pre hh6_1 hh6_2 hh6_3 hh6_4 hh6_5 hh6_6 any_kids female age_1 age_2 age_3 age_4 edu_1 edu_2 edu_3 edu_9 reg_1 reg_2 reg_3 urb_1 urb_2 urb_3 smsd"
+local levvars "inc_pre_pct inc_post_pct inc_pre_eur inc_post_eur transfer_eur hh_size n_children n_adults dag"
+
+foreach v in `levvars' `pctvars' {
+    local f = 1
+    if strpos(" `pctvars' ", " `v' ") > 0 local f = 100
+    capture drop y_
+    gen double y_ = `f' * `v'
+    quietly svy, subpop(s_t1): regress y_ i.smd_grp
+    local d = _b[1.smd_grp]
+    local se = _se[1.smd_grp]
+    local p = 2 * ttail(e(df_r), abs(`d' / `se'))
+    local n = e(N_sub)
+    quietly margins smd_grp, subpop(s_t1) vce(unconditional)
+    matrix M = r(b)
+    local m0 = M[1, 1]
+    local m1 = M[1, 2]
+    local rel = 100 * (`m1' / `m0' - 1)
+    local lab : variable label `v'
+    post `pt' ("`v'") ("`lab'") (`m1') (`m0') (`d') (`se') (`p') (`rel') (`n')
+    di as text %-14s "`v'" " IWP " %9.2f `m1' "  AxI " %9.2f `m0' "  diff " %8.2f `d' " (SE " %6.2f `se' ") p=" %6.4f `p' "  rel " %7.1f `rel' " %  N=" `n'
+}
+postclose `pt'
+
+* Medians of income (weighted)
+di _n as result "--- Medians (weighted) ---"
+table smd_grp if s_t1 == 1 [aw=dwt], statistic(p50 inc_pre_pct inc_post_pct inc_pre_eur inc_post_eur) nformat(%9.2f p50)
+
+* Joint test: household type distribution differs between groups?
+di _n as result "--- Test: household type distribution by group ---"
+svy, subpop(s_t1): tabulate hh6 smd_grp, column percent
+
+use `res', clear
+list var m_iwp m_axi diff se p rel n, noobs abbreviate(12) separator(0)
+export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/Table1_Results.xlsx", sheet("Table1", replace) firstrow(variables)
+
+di as result "=== FERTIG ==="
+
+log close

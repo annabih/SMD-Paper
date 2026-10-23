@@ -6,6 +6,7 @@
 ***   rental income (HY040G > 0): income from renting out property or land
 *** Models (same sample, AME of IWP vs. NEP in pp and %):
 ***   M12  all controls except health (as in the paper)
+***   M13a M12 + tenure only (capital income is close to the outcome: savings = coping with unexpected expenses)
 ***   M13  M12 + tenure + capital income + rental income
 ***   M13h M13 + health (= M11 + wealth proxies)
 *** Note: tenure mechanically affects the arrears item (outright owners have no mortgage/rent arrears)
@@ -47,9 +48,28 @@ label values tenure tenlbl
 gen byte cap_inc = (HY090G > 0 & !missing(HY090G))
 gen byte rent_inc = (HY040G > 0 & !missing(HY040G))
 
-* SMSD without arrears (12 items, >= 7 lacking, all 12 valid)
-egen n12 = rowtotal(smi_unexpected smi_holiday smi_meal smi_warm smi_car smi_furniture smi_clothes smi_shoes smi_social smi_leisure smi_pocket smi_internet)
-egen v12 = rownonmiss(smi_unexpected smi_holiday smi_meal smi_warm smi_car smi_furniture smi_clothes smi_shoes smi_social smi_leisure smi_pocket smi_internet)
+* SMSD without arrears (12 items, >= 7 lacking, all 12 valid); items built from the raw variables (as in the deprivation script)
+foreach v in HS040 HS050 HS060 HH050 HS110 HD080 PD020 PD030 PD050 PD060 PD070 PD080 {
+    capture confirm string variable `v'
+    if _rc == 0 {
+        replace `v' = subinstr(`v', ",", ".", .)
+        destring `v', replace force
+    }
+}
+gen byte i_unexpected = (HS060 == 2) if inlist(HS060, 1, 2)
+gen byte i_holiday = (HS040 == 2) if inlist(HS040, 1, 2)
+gen byte i_meal = (HS050 == 2) if inlist(HS050, 1, 2)
+gen byte i_warm = (HH050 == 2) if inlist(HH050, 1, 2)
+gen byte i_car = (HS110 == 2) if inlist(HS110, 1, 2, 3)
+gen byte i_furniture = (HD080 == 2) if inlist(HD080, 1, 2, 3)
+gen byte i_clothes = (PD020 == 2) if inlist(PD020, 1, 2, 3)
+gen byte i_shoes = (PD030 == 2) if inlist(PD030, 1, 2, 3)
+gen byte i_social = (PD050 == 2) if inlist(PD050, 1, 2, 3)
+gen byte i_leisure = (PD060 == 2) if inlist(PD060, 1, 2, 3)
+gen byte i_pocket = (PD070 == 2) if inlist(PD070, 1, 2, 3)
+gen byte i_internet = (PD080 == 2) if inlist(PD080, 1, 2, 3)
+egen n12 = rowtotal(i_unexpected i_holiday i_meal i_warm i_car i_furniture i_clothes i_shoes i_social i_leisure i_pocket i_internet)
+egen v12 = rownonmiss(i_unexpected i_holiday i_meal i_warm i_car i_furniture i_clothes i_shoes i_social i_leisure i_pocket i_internet)
 gen byte smd12 = (n12 >= 7) if v12 == 12
 
 gen byte s_main = !missing(smd_grp, smd)
@@ -63,11 +83,12 @@ table smd_grp if s_main == 1 [aw=dwt], statistic(mean cap_inc rent_inc) nformat(
 
 *** Models
 local c12 "i.year i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban"
+local c13a "`c12' i.tenure"
 local c13 "`c12' i.tenure i.cap_inc i.rent_inc"
 local c13h "`c13' i.health_bad i.limit"
 
 foreach y in smd smd12 {
-    foreach m in 12 13 13h {
+    foreach m in 12 13a 13 13h {
         quietly svy, subpop(s_main): logit `y' i.smd_grp `c`m''
         local orr = exp(_b[1.smd_grp])
         local n = e(N_sub)

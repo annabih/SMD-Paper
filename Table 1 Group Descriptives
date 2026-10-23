@@ -47,15 +47,16 @@ sum is_iwp is_axi [aw=dwt] if wa == 1
 * B: income of the same persons before and after transfers
 gen double inc_post_pct = 100 * post_disp_hh_income_equ / poverty_threshold_rel
 gen double inc_pre_pct = 100 * pre_disp_hh_income_equ / poverty_threshold_rel
-gen double inc_post_eur = post_disp_hh_income_equ * defl
-gen double inc_pre_eur = pre_disp_hh_income_equ * defl
-gen double transfer_eur = (post_disp_hh_income_equ - pre_disp_hh_income_equ) * defl
+* EUR values nominal (as in the survey year): group comparisons within a year are unaffected by prices
+gen double inc_post_eur = post_disp_hh_income_equ
+gen double inc_pre_eur = pre_disp_hh_income_equ
+gen double transfer_eur = post_disp_hh_income_equ - pre_disp_hh_income_equ
 gen byte poor_pre = (pre_disp_hh_income_equ < poverty_threshold_rel) if !missing(pre_disp_hh_income_equ)
 label variable inc_post_pct "Income after transfers, % of poverty line"
 label variable inc_pre_pct "Income before transfers, % of poverty line"
-label variable inc_post_eur "Income after transfers, EUR/month (2023 prices)"
-label variable inc_pre_eur "Income before transfers, EUR/month (2023 prices)"
-label variable transfer_eur "Social transfers (post - pre), EUR/month equivalised (2023 prices)"
+label variable inc_post_eur "Income after transfers, EUR/month (nominal)"
+label variable inc_pre_eur "Income before transfers, EUR/month (nominal)"
+label variable transfer_eur "Social transfers (post - pre), EUR/month equivalised (nominal)"
 label variable poor_pre "Also at risk of poverty before transfers"
 
 * C: household composition (6 types)

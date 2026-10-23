@@ -124,7 +124,7 @@ postclose `pt'
 
 * Medians of income (weighted)
 di _n as result "--- Medians (weighted) ---"
-table smd_grp if s_t1 == 1 [aw=dwt], statistic(p50 inc_pre_pct inc_post_pct inc_pre_eur inc_post_eur) nformat(%9.2f p50)
+table smd_grp if s_t1 == 1 [aw=dwt], statistic(p50 inc_pre_pct inc_post_pct inc_pre_eur inc_post_eur transfer_eur) nformat(%9.2f p50)
 
 * Joint test: household type distribution differs between groups?
 di _n as result "--- Test: household type distribution by group ---"

@@ -11,6 +11,8 @@
 ***   PART G2: Household structure and SMD - children vs. adults within IWP Employees and AROP w/o IWP (year FE; + income position), +1 effects in pp and %, group interaction tests
 ***   PART H: Sector within IWP Employees - IWP rate and SMD by sector (sector exists only for persons with a job)
 ***   PART I: Robustness - AROP w/o IWP without students (R2) and unemployed only (R3); SMD M1/M5/M11/M12 (rebuilt and RX060), items M1/M12
+***   PART J: Further robustness - health Wald test, M12 on M11 sample, flexible income control, NEP without currently employed (R4),
+***           wealth proxies (M13a/M13/M13h), SMSD without arrears
 *** Groups: smd_grp (script 03): 1 = IWP Employees, 0 = AROP w/o IWP; both 18-64, post-transfer, without old-age benefit recipients
 *** Outcome: smd = SMSD rebuilt from the 13 items for all years (Prepair script); RX060 as provided (smd_rx060) only as robustness (Part I)
 *** Survey design: svyset hh_cl [pw=dwt] (household cluster, idhh unique within year)
@@ -593,6 +595,122 @@ postclose `prb'
 
 
 *******************************************************************************************************************************************************************************************
+*** PART J: Further robustness of the headline effect (reviewer checks)
+***   J1 health block in M11: joint Wald test of self-rated health and activity limitation
+***   J2 M12 estimated on the M11 sample (difference M12 vs. M11 not driven by the few cases dropped in M11)
+***   J3 flexible income control instead of the linear income position in M12:
+***      J3a income bands (< 40, 40-60, 60-80, >= 80 % of the poverty line), J3b restricted cubic spline (4 knots),
+***      J3c common income range: only persons between 50 and 100 % of the poverty line
+***   J4 R4 AROP w/o IWP without persons currently employed at the interview (act_status == 1)
+***   J5 wealth proxies (EU-SILC has no wealth variable): M13a = M12 + tenure (HH021);
+***      M13 = M13a + capital income (HY090G > 0) + rental income (HY040G > 0); M13h = M13 + health
+***      capital income is close to the outcome (savings <-> coping with unexpected expenses) -> M13a is the main variant
+***   J6 SMSD without the arrears item (12 items, >= 7 lacking): tenure mechanically affects mortgage/rent arrears
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART J: Further robustness ==================="
+
+tempname pj
+tempfile res_j
+postfile `pj' str6 check str16 outcome str8 spec double(n or or_lo or_hi p s_iwp s_axi pp pp_se rel rel_se) using `res_j', replace
+
+*** J1: joint test of the health block in M11
+di _n as result "--- J1: Wald test health block in M11 ---"
+svy, subpop(s_main): logit smd i.smd_grp `c11'
+testparm i.health_bad i.limit
+capture drop s_m11
+gen byte s_m11 = (s_main == 1 & e(sample) == 1)
+
+*** J2: M12 on the M11 sample
+di _n as result "--- J2: M12 and M11 on the identical sample ---"
+foreach m in 12 11 {
+    grp_effect smd, sample(s_m11) group(smd_grp) controls(`c`m'')
+    post `pj' ("J2") ("smd") ("M`m'") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+}
+
+*** J3: flexible income control
+capture drop inc_band inc_sp*
+gen byte inc_band = 1 if inc_rel < 40
+replace inc_band = 2 if inc_rel >= 40 & inc_rel < 60
+replace inc_band = 3 if inc_rel >= 60 & inc_rel < 80
+replace inc_band = 4 if inc_rel >= 80 & !missing(inc_rel)
+label define incband 1 "< 40 %" 2 "40-60 %" 3 "60-80 %" 4 ">= 80 %"
+label values inc_band incband
+di _n as result "--- J3: income bands by group (weighted, column %) ---"
+svy, subpop(s_main): tabulate inc_band smd_grp, column percent
+mkspline inc_sp = inc_rel if s_main == 1, cubic nknots(4)
+local c12_base "i.year i.age_grp i.sex i.hh_type i.educ3 i.region i.urban"
+capture drop s_cs
+gen byte s_cs = (s_main == 1 & inrange(inc_rel, 50, 100))
+di _n as result "--- J3: M12 with flexible income control ---"
+grp_effect smd, sample(s_main) group(smd_grp) controls(`c12_base' i.inc_band)
+post `pj' ("J3a") ("smd") ("M12band") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+grp_effect smd, sample(s_main) group(smd_grp) controls(`c12_base' inc_sp1 inc_sp2 inc_sp3)
+post `pj' ("J3b") ("smd") ("M12spl") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+foreach m in 1 12 {
+    grp_effect smd, sample(s_cs) group(smd_grp) controls(`c`m'')
+    post `pj' ("J3c") ("smd") ("M`m'") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+}
+
+*** J4: without NEP currently employed at the interview
+capture drop s_r4
+gen byte s_r4 = (s_main == 1 & !(smd_grp == 0 & act_status == 1))
+di _n as result "--- J4: R4 without currently employed NEP ---"
+table smd_grp if s_r4 == 1 [aw=dwt], statistic(mean smd) statistic(frequency) nformat(%9.4f mean)
+foreach m in 1 5 11 12 {
+    grp_effect smd, sample(s_r4) group(smd_grp) controls(`c`m'')
+    post `pj' ("J4") ("smd") ("M`m'") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+}
+
+*** J5 / J6: wealth proxies and SMSD without arrears
+foreach v in HH021 HY090G HY040G {
+    capture confirm variable `v'
+    if _rc != 0 {
+        di as error "`v' not in the dataset - add it in the merge script"
+        gen double `v' = .
+    }
+    capture confirm string variable `v'
+    if _rc == 0 {
+        replace `v' = subinstr(`v', ",", ".", .)
+        destring `v', replace force
+    }
+}
+capture drop tenure cap_inc rent_inc
+gen byte tenure = 9
+replace tenure = 1 if HH021 == 1
+replace tenure = 2 if HH021 == 2
+replace tenure = 3 if HH021 == 3
+replace tenure = 4 if inlist(HH021, 4, 5)
+label define tenlbl 1 "Owner, no mortgage" 2 "Owner, mortgage" 3 "Tenant, market rent" 4 "Reduced rent / rent free" 9 "Missing"
+label values tenure tenlbl
+gen byte cap_inc = (HY090G > 0 & !missing(HY090G))
+gen byte rent_inc = (HY040G > 0 & !missing(HY040G))
+di _n as result "--- J5: wealth proxies by group ---"
+svy, subpop(s_main): tabulate tenure smd_grp, column percent
+table smd_grp if s_main == 1 [aw=dwt], statistic(mean cap_inc rent_inc) nformat(%9.3f mean)
+
+capture drop n12 v12 smd12
+egen n12 = rowtotal(dep_unexpected dep_holiday dep_meal dep_warm dep_car dep_furniture dep_clothes dep_shoes dep_social dep_leisure dep_pocket dep_internet)
+egen v12 = rownonmiss(dep_unexpected dep_holiday dep_meal dep_warm dep_car dep_furniture dep_clothes dep_shoes dep_social dep_leisure dep_pocket dep_internet)
+gen byte smd12 = (n12 >= 7) if v12 == 12
+label variable smd12 "SMSD without arrears (12 items, >= 7 lacking)"
+
+local c13a "`c12' i.tenure"
+local c13 "`c12' i.tenure i.cap_inc i.rent_inc"
+local c13h "`c13' i.health_bad i.limit"
+foreach y in smd smd12 {
+    foreach m in 12 13a 13 13h {
+        di _n as result "--- J5/J6 `y', M`m' ---"
+        grp_effect `y', sample(s_main) group(smd_grp) controls(`c`m'')
+        post `pj' ("J5") ("`y'") ("M`m'") (r(n)) (r(or)) (r(or_lo)) (r(or_hi)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+    }
+}
+di _n as result "--- J5: full M13 (odds ratios of the wealth proxies) ---"
+svy, subpop(s_main): logit smd i.smd_grp `c13', or
+postclose `pj'
+
+
+*******************************************************************************************************************************************************************************************
 *** Export results to Excel (one sheet per part), incl. Holm/Bonferroni adjustment
 *******************************************************************************************************************************************************************************************
 
@@ -701,6 +819,11 @@ sort ord
 drop ord item
 list sample outcome spec n s_iwp s_axi pp pp_se rel p p_holm, noobs abbreviate(10) sepby(sample spec)
 export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("I_robustness", replace) firstrow(variables)
+
+* J: further robustness
+use `res_j', clear
+list check outcome spec n s_iwp s_axi pp pp_se rel p, noobs abbreviate(10) sepby(check)
+export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("J_robustness", replace) firstrow(variables)
 
 di as result "=== FERTIG ==="
 

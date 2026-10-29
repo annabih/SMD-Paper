@@ -216,7 +216,7 @@ forvalues m = 11/`last' {
     local yrsc = subinstr(trim("`yrs'"), " ", ",", .)
     capture drop s_sub
     gen byte s_sub = (s_main == 1 & inlist(year, `yrsc'))
-    capture noisily row "M`m'" "`l`m''" s_m "`ctrl'" "`yrs'"
+    capture noisily row "M`m'" "`l`m''" s_sub "`ctrl'" "`yrs'"
 }
 * All controls together / without health (former M11 / M12), all years
 row "Alle" "alle Kontrollen zusammen" s_main "i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban i.health_bad i.limit" "2018-2024"

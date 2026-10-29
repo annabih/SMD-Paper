@@ -1,0 +1,408 @@
+*******************************************************************************************************************************************************************************************
+*** Title: PART K - main SMSD model ladder extended by additional controls and indicators
+*** Aim: (1) check in which survey years the new variables exist (K1); (2) re-run the main ladder M1-M12 and add every new
+***      variable as an extra single control on the years in which it exists, always next to M1 and M12 on the SAME sample (K3);
+***      (3) combined model (K4); (4) unmet medical/dental needs, life satisfaction and trust as additional outcomes (K5);
+***      (5) variables that only exist for one group (PL016, PL020, PL025, company car) as descriptives and NEP subgroups (K6)
+*** New variables: PB230 PB240 (parents' country of birth), PH020 (chronic illness), PH030 (limitation, already in M10),
+***      PH040 PH060 (unmet medical/dental needs), PY021N (company car), PY130N (disability benefits), PY120G (sickness benefits),
+***      PW010 (life satisfaction), PW191 (trust), PT190-PT240 (situation at age 14), PHD01 PHD06 (housing difficulties),
+***      PL016 (previous employment experience), PL020 (actively looking for a job), PL025 (available for work)
+*** Notes: variables missing in a year are skipped automatically; categorical controls carry a missing category (9 / 99)
+***      life satisfaction and trust are entered as controls only for completeness - they are rather outcomes than controls
+*** Input: SILC_All_Years_Adjusted.dta | Output: K_extended_log.txt, sheet K_extended in 05_Deprivation_Results.xlsx
+*******************************************************************************************************************************************************************************************
+
+capture log close
+clear all
+set more off
+
+log using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/K_extended_log.txt", text replace
+
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_All_Years_Adjusted.dta", clear
+
+*******************************************************************************************************************************************************************************************
+
+********************************************************************************
+* Destring item variables (imported as strings in script 01)
+********************************************************************************
+
+foreach var in HS011 HS021 HS031 HS040 HS050 HS060 HH050 HS110 HD080 PD020 PD030 PD050 PD060 PD070 PD080 {
+    capture confirm variable `var'
+    if _rc == 0 {
+        capture confirm string variable `var'
+        if _rc == 0 {
+            replace `var' = subinstr(`var', ",", ".", .)
+            destring `var', replace force
+        }
+    }
+    else {
+        gen double `var' = .
+        di as error "`var' not found, created as missing"
+    }
+}
+
+********************************************************************************
+* 13 SMSD items: 1 = lacking because cannot afford, 0 = has it / lacks for other reasons
+* Household items (7): HS060, HS040, arrears (HS011/HS021/HS031), HS050, HH050, HS110, HD080
+* Personal items (6): PD020, PD030, PD050, PD060, PD070, PD080
+********************************************************************************
+
+capture drop dep_*
+
+gen byte dep_unexpected = (HS060 == 2) if inlist(HS060, 1, 2)
+gen byte dep_holiday = (HS040 == 2) if inlist(HS040, 1, 2)
+gen byte dep_meal = (HS050 == 2) if inlist(HS050, 1, 2)
+gen byte dep_warm = (HH050 == 2) if inlist(HH050, 1, 2)
+gen byte dep_car = (HS110 == 2) if inlist(HS110, 1, 2, 3)
+gen byte dep_furniture = (HD080 == 2) if inlist(HD080, 1, 2, 3)
+
+* Arrears (composite): any arrears on rent/mortgage, utilities or loans; missing only if all three missing
+gen byte dep_arrears = (inlist(HS011, 1, 2) | inlist(HS021, 1, 2) | inlist(HS031, 1, 2)) if !missing(HS011) | !missing(HS021) | !missing(HS031)
+
+* Arrears sub-items (supplementary)
+gen byte dep_arr_rent = inlist(HS011, 1, 2) if inlist(HS011, 1, 2, 3)
+gen byte dep_arr_util = inlist(HS021, 1, 2) if inlist(HS021, 1, 2, 3)
+gen byte dep_arr_loan = inlist(HS031, 1, 2) if inlist(HS031, 1, 2, 3)
+
+gen byte dep_clothes = (PD020 == 2) if inlist(PD020, 1, 2, 3)
+gen byte dep_shoes = (PD030 == 2) if inlist(PD030, 1, 2, 3)
+gen byte dep_social = (PD050 == 2) if inlist(PD050, 1, 2, 3)
+gen byte dep_leisure = (PD060 == 2) if inlist(PD060, 1, 2, 3)
+gen byte dep_pocket = (PD070 == 2) if inlist(PD070, 1, 2, 3)
+gen byte dep_internet = (PD080 == 2) if inlist(PD080, 1, 2, 3)
+
+label variable dep_unexpected "Cannot face unexpected expenses (HS060)"
+label variable dep_holiday "Cannot afford one week holiday (HS040)"
+label variable dep_arrears "Arrears: rent/mortgage, utilities or loans (HS011/HS021/HS031)"
+label variable dep_meal "Cannot afford meal with meat/fish every 2nd day (HS050)"
+label variable dep_warm "Cannot keep home adequately warm (HH050)"
+label variable dep_car "Cannot afford a car (HS110)"
+label variable dep_furniture "Cannot replace worn-out furniture (HD080)"
+label variable dep_arr_rent "Arrears on rent/mortgage (HS011)"
+label variable dep_arr_util "Arrears on utility bills (HS021)"
+label variable dep_arr_loan "Arrears on loans/hire purchase (HS031)"
+label variable dep_clothes "Cannot replace worn-out clothes (PD020)"
+label variable dep_shoes "Cannot afford two pairs of shoes (PD030)"
+label variable dep_social "Cannot meet friends/family monthly (PD050)"
+label variable dep_leisure "Cannot regularly take part in leisure activity (PD060)"
+label variable dep_pocket "Cannot spend small amount on oneself (PD070)"
+label variable dep_internet "Cannot afford internet at home (PD080)"
+
+local items13 "dep_unexpected dep_holiday dep_arrears dep_meal dep_warm dep_car dep_furniture dep_clothes dep_shoes dep_social dep_leisure dep_pocket dep_internet"
+local items_arr "dep_arr_rent dep_arr_util dep_arr_loan"
+local outcomes "smd `items13' `items_arr'"
+
+* Number of lacking items (among non-missing items) - descriptive only
+egen dep_count = rowtotal(`items13')
+egen dep_valid = rownonmiss(`items13')
+replace dep_count = . if dep_valid < 13
+label variable dep_count "Number of SMSD items lacking (0-13, complete cases)"
+
+********************************************************************************
+* Samples
+********************************************************************************
+
+* Main sample: SMD comparison groups (script 03)
+capture drop s_main
+gen byte s_main = (!missing(smd_grp) & inrange(year, 2018, 2024))
+
+tab year smd_grp if s_main == 1, missing
+
+********************************************************************************
+* Survey design
+********************************************************************************
+
+capture drop hh_cl
+egen long hh_cl = group(year idhh)
+svyset hh_cl [pw=dwt], vce(linearized)
+
+********************************************************************************
+* Control specifications: one model per control variable, then all together
+* Every model contains year fixed effects
+* M1:  year FE only
+* M2:  + age group            M3:  + sex
+* M4:  + household type       M5:  + income position (% of threshold) -> "beyond income"
+* M6:  + education (ISCED)    M7:  + region (NUTS 1)       M8: + degree of urbanisation
+* M9:  + general health (bad / very bad)                   M10: + limitation in activities
+* M11: all controls together
+* M12: all controls except health (M2-M8 together, without M9/M10): health may itself be a consequence of deprivation
+* Missing values of education, urbanisation and health are an own category (constant N across models)
+********************************************************************************
+
+local c1 "i.year"
+local c2 "i.year i.age_grp"
+local c3 "i.year i.sex"
+local c4 "i.year i.hh_type"
+local c5 "i.year c.inc_rel"
+local c6 "i.year i.educ3"
+local c7 "i.year i.region"
+local c8 "i.year i.urban"
+local c9 "i.year i.health_bad"
+local c10 "i.year i.limit"
+local c11 "i.year i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban i.health_bad i.limit"
+local c12 "i.year i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban"
+
+********************************************************************************
+* Helper program: group effect of a binary group variable on a binary outcome
+* Returns OR (95% CI, p), average predicted shares per group, pp difference and relative change (with SE)
+********************************************************************************
+
+capture program drop grp_effect
+program define grp_effect, rclass
+    syntax varname, SAMPle(varname) GRoup(varname) [CONTRols(string)]
+    quietly svy, subpop(`sample'): logit `varlist' i.`group' `controls'
+    local b = _b[1.`group']
+    local se = _se[1.`group']
+    local df = e(df_r)
+    local n = e(N_sub)
+    local crit = invttail(`df', 0.025)
+    local or = exp(`b')
+    local or_lo = exp(`b' - `crit' * `se')
+    local or_hi = exp(`b' + `crit' * `se')
+    local p = 2 * ttail(`df', abs(`b' / `se'))
+    quietly margins `group', subpop(`sample') vce(unconditional) post
+    local s1 = 100 * _b[1.`group']
+    local s0 = 100 * _b[0bn.`group']
+    quietly lincom 100 * _b[1.`group'] - 100 * _b[0bn.`group']
+    local pp = r(estimate)
+    local pp_se = r(se)
+    quietly nlcom (rel: 100 * (_b[1.`group'] / _b[0bn.`group'] - 1))
+    tempname rb rV
+    matrix `rb' = r(b)
+    matrix `rV' = r(V)
+    local rel = `rb'[1, 1]
+    local rel_se = sqrt(`rV'[1, 1])
+    di as text %-16s "`varlist'" " OR " %6.3f `or' " [" %5.3f `or_lo' "; " %5.3f `or_hi' "] p=" %6.4f `p' " | IWP " %6.2f `s1' "% AxI " %6.2f `s0' "% | " %7.2f `pp' " pp (SE " %4.2f `pp_se' ") | " %7.1f `rel' " % (SE " %4.1f `rel_se' ") | N=" `n'
+    return scalar n = `n'
+    return scalar or = `or'
+    return scalar or_lo = `or_lo'
+    return scalar or_hi = `or_hi'
+    return scalar p = `p'
+    return scalar s_iwp = `s1'
+    return scalar s_axi = `s0'
+    return scalar pp = `pp'
+    return scalar pp_se = `pp_se'
+    return scalar rel = `rel'
+    return scalar rel_se = `rel_se'
+end
+
+*******************************************************************************************************************************************************************************************
+*** PART K: Extended controls and additional indicators
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART K: Extended controls ==================="
+
+tempname pk
+tempfile res_k
+postfile `pk' str8 block str14 var str12 spec str16 years double(n or p s_iwp s_axi pp pp_se rel rel_se) using `res_k', replace
+
+*** K0: destring numeric variables (decimal comma); create empty variable if not in the dataset
+local knum "PL016 PH020 PH030 PH040 PH060 PY021N PY130N PY120G PW010 PW191 PT220 PT230 PT240 PT210 PT190 PHD01 PHD06 PL025 PL020"
+foreach v of local knum {
+    capture confirm variable `v'
+    if _rc != 0 {
+        di as error "`v' not in the dataset (check merge script / UDB release)"
+        gen double `v' = .
+    }
+    capture confirm string variable `v'
+    if _rc == 0 {
+        replace `v' = subinstr(`v', ",", ".", .)
+        destring `v', replace force
+    }
+}
+* Parents' country of birth: string codes LOC / EU / OTH
+foreach v in PB230 PB240 {
+    capture confirm variable `v'
+    if _rc != 0 {
+        di as error "`v' not in the dataset (check merge script / UDB release)"
+        gen str3 `v' = ""
+    }
+    capture confirm string variable `v'
+    if _rc != 0 {
+        tostring `v', replace force
+        replace `v' = "" if `v' == "."
+    }
+    replace `v' = strtrim(`v')
+}
+
+*** K1: availability by survey year (share of the SMD comparison groups with a valid value)
+foreach v of local knum {
+    capture drop av_`v'
+    gen byte av_`v' = !missing(`v')
+}
+foreach v in PB230 PB240 {
+    capture drop av_`v'
+    gen byte av_`v' = (`v' != "")
+}
+di _n as result "--- K1: share with valid values by year (IWP + NEP) ---"
+tabstat av_* if s_main == 1, by(year) statistics(mean) columns(variables) format(%4.2f)
+di _n as result "--- K1: share with valid values by group (pooled) ---"
+tabstat av_* if s_main == 1, by(smd_grp) statistics(mean) columns(variables) format(%4.2f)
+
+*** K2: constructed variables (missing = own category 9 / 99 so that N stays constant within the available years)
+capture drop k_*
+gen byte k_migback = 9
+replace k_migback = 0 if PB230 == "LOC" & PB240 == "LOC"
+replace k_migback = 1 if inlist(PB230, "EU", "OTH") | inlist(PB240, "EU", "OTH")
+label define kmig 0 "Both parents born in AT" 1 "At least one parent born abroad" 9 "Missing", replace
+label values k_migback kmig
+gen byte k_chronic = 9
+replace k_chronic = 1 if PH020 == 1
+replace k_chronic = 0 if PH020 == 2
+gen byte k_disben = (PY130N > 0 & !missing(PY130N))
+gen byte k_sickben = (PY120G > 0 & !missing(PY120G))
+gen byte k_compcar = (PY021N > 0 & !missing(PY021N))
+foreach v in PT220 PT230 PT240 PT210 PT190 PHD01 PHD06 {
+    gen int k_`v' = `v'
+    replace k_`v' = 99 if missing(k_`v')
+}
+gen double k_lifesat = PW010
+gen double k_trust = PW191
+* Additional outcomes (binary)
+gen byte o_unmet_med = (PH040 == 1) if inlist(PH040, 1, 2)
+gen byte o_unmet_dent = (PH060 == 1) if inlist(PH060, 1, 2)
+gen byte o_lowsat = (PW010 <= 5) if !missing(PW010)
+gen byte o_lowtrust = (PW191 <= 4) if !missing(PW191)
+label variable o_lowsat "Life satisfaction 0-5"
+label variable o_lowtrust "Trust in others 0-4"
+
+*** Year sample per variable: survey years in which > 50 % of the comparison groups have a valid value
+capture program drop k_years
+program define k_years
+    args avvar newvar
+    tempvar sh
+    egen `sh' = mean(cond(s_main == 1, `avvar', .)), by(year)
+    gen byte `newvar' = (s_main == 1 & `sh' > 0.5 & !missing(`sh'))
+end
+
+*** K3: baseline ladder M1-M12 (all years) and each new control as an additional single-control model
+di _n as result "--- K3a: baseline M1-M12 (all years) ---"
+forvalues m = 1/12 {
+    grp_effect smd, sample(s_main) group(smd_grp) controls(`c`m'')
+    post `pk' ("base") ("smd") ("M`m'") ("2018-2024") (r(n)) (r(or)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+}
+
+* New controls: name of the control term and the availability variable it depends on
+local newctrl "migback chronic disben sickben compcar PT220 PT230 PT240 PT210 PT190 PHD01 PHD06 lifesat trust"
+foreach x of local newctrl {
+    local term "i.k_`x'"
+    local av "av_PB230"
+    if "`x'" == "chronic" local av "av_PH020"
+    if "`x'" == "disben" local av "av_PY130N"
+    if "`x'" == "sickben" local av "av_PY120G"
+    if "`x'" == "compcar" local av "av_PY021N"
+    if inlist("`x'", "PT220", "PT230", "PT240", "PT210", "PT190", "PHD01", "PHD06") local av "av_`x'"
+    if "`x'" == "lifesat" {
+        local term "c.k_lifesat"
+        local av "av_PW010"
+    }
+    if "`x'" == "trust" {
+        local term "c.k_trust"
+        local av "av_PW191"
+    }
+    capture drop s_k
+    k_years `av' s_k
+    if inlist("`x'", "lifesat", "trust") replace s_k = 0 if missing(k_`x')
+    quietly count if s_k == 1
+    if r(N) < 200 {
+        di as error "`x': not enough observations in the available years (N = " r(N) ") - skipped"
+        continue
+    }
+    quietly levelsof year if s_k == 1, local(yrs)
+    local yrs = subinstr(trim("`yrs'"), " ", ",", .)
+    di _n as result "--- K3b: `x' (years `yrs') ---"
+    * Same sample: M1, M1 + X, M12, M12 + X
+    grp_effect smd, sample(s_k) group(smd_grp) controls(`c1')
+    post `pk' ("single") ("`x'") ("M1") ("`yrs'") (r(n)) (r(or)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+    grp_effect smd, sample(s_k) group(smd_grp) controls(`c1' `term')
+    post `pk' ("single") ("`x'") ("M1+X") ("`yrs'") (r(n)) (r(or)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+    grp_effect smd, sample(s_k) group(smd_grp) controls(`c12')
+    post `pk' ("single") ("`x'") ("M12") ("`yrs'") (r(n)) (r(or)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+    grp_effect smd, sample(s_k) group(smd_grp) controls(`c12' `term')
+    post `pk' ("single") ("`x'") ("M12+X") ("`yrs'") (r(n)) (r(or)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+}
+
+*** K4: combined model - M12 + all new controls available in the same years (migration background, chronic illness, disability and sickness benefits)
+capture drop s_k
+k_years av_PB230 s_k
+replace s_k = 0 if s_k == 1 & missing(PH020) & missing(PY130N)
+quietly levelsof year if s_k == 1, local(yrs)
+local yrs = subinstr(trim("`yrs'"), " ", ",", .)
+di _n as result "--- K4: combined model (years `yrs') ---"
+foreach m in 12 11 {
+    grp_effect smd, sample(s_k) group(smd_grp) controls(`c`m'')
+    post `pk' ("comb") ("smd") ("M`m'") ("`yrs'") (r(n)) (r(or)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+    grp_effect smd, sample(s_k) group(smd_grp) controls(`c`m'' i.k_migback i.k_chronic i.k_disben i.k_sickben)
+    post `pk' ("comb") ("smd") ("M`m'+all") ("`yrs'") (r(n)) (r(or)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+}
+
+*** K5: additional indicators as outcomes (unmet medical / dental needs, low life satisfaction, low trust)
+foreach y in o_unmet_med o_unmet_dent o_lowsat o_lowtrust {
+    capture drop s_k
+    gen byte s_k = (s_main == 1 & !missing(`y'))
+    quietly count if s_k == 1 & smd_grp == 1
+    if r(N) < 100 {
+        di as error "`y': too few observations - skipped"
+        continue
+    }
+    quietly levelsof year if s_k == 1, local(yrs)
+    local yrs = subinstr(trim("`yrs'"), " ", ",", .)
+    di _n as result "--- K5: outcome `y' (years `yrs') ---"
+    foreach m in 1 5 12 {
+        grp_effect `y', sample(s_k) group(smd_grp) controls(`c`m'')
+        post `pk' ("outcome") ("`y'") ("M`m'") ("`yrs'") (r(n)) (r(or)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+    }
+}
+di _n as result "--- K5: mean life satisfaction and trust by group (weighted) ---"
+table smd_grp if s_main == 1 [aw=dwt], statistic(mean PW010 PW191) statistic(count PW010 PW191) nformat(%9.2f mean)
+
+*** K6: variables that only exist for one group (cannot be controls): descriptives and NEP subgroups
+* PL016, PL020, PL025 are only asked of persons not currently employed; the company car only exists with employee income
+di _n as result "--- K6: company car by group ---"
+table smd_grp if s_main == 1 [aw=dwt], statistic(mean k_compcar) nformat(%9.3f mean)
+foreach v in PL016 PL020 PL025 {
+    di _n as result "--- K6: `v' among NEP (weighted column %) and SMSD by category ---"
+    capture noisily tab year `v' if s_main == 1 & smd_grp == 0, missing
+    capture noisily table `v' if s_main == 1 & smd_grp == 0 [aw=dwt], statistic(mean smd) statistic(frequency) nformat(%9.3f mean)
+}
+* IWP vs. NEP who have previous employment experience other than occasional work (PL016 == 3)
+capture drop s_k
+gen byte s_k = (s_main == 1 & (smd_grp == 1 | (smd_grp == 0 & PL016 == 3)))
+quietly count if s_k == 1 & smd_grp == 0
+if r(N) >= 100 {
+    quietly levelsof year if s_k == 1 & smd_grp == 0, local(yrs)
+    local yrs = subinstr(trim("`yrs'"), " ", ",", .)
+    di _n as result "--- K6: IWP vs. NEP with previous employment experience (years `yrs') ---"
+    replace s_k = 0 if !inlist(year, `yrs')
+    foreach m in 1 12 {
+        grp_effect smd, sample(s_k) group(smd_grp) controls(`c`m'')
+        post `pk' ("subgrp") ("NEP_PL016_3") ("M`m'") ("`yrs'") (r(n)) (r(or)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+    }
+}
+* IWP vs. NEP who are available for work (PL025 == 1) or actively looking (PL020 == 1)
+foreach v in PL025 PL020 {
+    capture drop s_k
+    gen byte s_k = (s_main == 1 & (smd_grp == 1 | (smd_grp == 0 & `v' == 1)))
+    quietly count if s_k == 1 & smd_grp == 0
+    if r(N) < 100 continue
+    quietly levelsof year if s_k == 1 & smd_grp == 0, local(yrs)
+    local yrs = subinstr(trim("`yrs'"), " ", ",", .)
+    replace s_k = 0 if !inlist(year, `yrs')
+    di _n as result "--- K6: IWP vs. NEP with `v' == 1 (years `yrs') ---"
+    foreach m in 1 12 {
+        grp_effect smd, sample(s_k) group(smd_grp) controls(`c`m'')
+        post `pk' ("subgrp") ("NEP_`v'_1") ("M`m'") ("`yrs'") (r(n)) (r(or)) (r(p)) (r(s_iwp)) (r(s_axi)) (r(pp)) (r(pp_se)) (r(rel)) (r(rel_se))
+    }
+}
+postclose `pk'
+
+
+use `res_k', clear
+format s_iwp s_axi pp pp_se rel rel_se %9.2f
+format p %9.4f
+list block var spec years n s_iwp s_axi pp pp_se rel p, noobs abbreviate(10) sepby(var)
+export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("K_extended", replace) firstrow(variables)
+
+di as result "=== FERTIG ==="
+log close

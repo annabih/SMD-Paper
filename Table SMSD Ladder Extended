@@ -2,7 +2,7 @@
 *** Title: SMSD ladder (Table 18 "Schutzeffekt der Erwerbsarbeit gegen SMD") - each additional variable as its own single-control model
 *** M1-M10 as before (year + one control); M11 ff.: year + one new variable (or a group of related variables jointly)
 *** M39-M48: own migration background, social assistance, unemployment, other earners in the household, housing costs
-*** At the end: all controls together and all controls without health (= former M11 / M12), and both plus M39-M48
+*** At the end: all controls together and all controls without health (= former M11 / M12), and both plus M42-M48 (with / without the unemployment variables)
 *** Each new variable is used in the survey years in which it exists (> 50 % valid); the columns pp_M1 / rel_M1 give M1
 *** (year only) on exactly the same sample, so the change through the control can be read directly
 *** Coding: categorical, missing = own category 99 (N constant within the available years); amounts (PY...) as "> 0"
@@ -318,20 +318,28 @@ forvalues m = 11/`last' {
 * All controls together / without health (former M11 / M12), all years
 row "Alle" "alle Kontrollen zusammen" s_main "i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban i.health_bad i.limit" "2018-2024"
 row "OhneG" "alle Kontrollen ohne Gesundheit" s_main "i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban" "2018-2024"
-* All controls + the additional checks (M39-M48 jointly; income after housing costs replaces nothing, enters in addition)
+* All controls + the additional checks, all years. Own migration background (M39-M41) is left out: PB210 / PB220A
+* exist only 2018-2020 and explain nothing on their own. AlleU / OhneGU add social assistance, unemployment benefits,
+* months unemployed, other earners and housing costs; AlleR / OhneGR leave out the two unemployment variables, because
+* months unemployed partly reproduces the group definition (IWP work >= 7 months, so they cannot have 7-12 months unemployed)
 local yrs "2018 2019 2020 2021 2022 2023 2024"
-foreach v in PB210 PB220A HY060G PY090G PL080 OTHW AHC HCB {
+foreach v in HY060G PY090G PL080 OTHW AHC HCB {
     local yrs : list yrs & yrs_`v'
 }
 if "`yrs'" != "" {
     local yrsc = subinstr(trim("`yrs'"), " ", ",", .)
     capture drop s_sub
     gen byte s_sub = (s_main == 1 & inlist(year, `yrsc'))
-    local newc "i.x_PB210 i.x_PB220A i.x_HY060G i.x_PY090G i.x_PL080 i.x_OTHW c.x_AHC i.x_HCB"
-    capture noisily row "AlleN" "alle Kontrollen + M39-M48" s_sub "i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban i.health_bad i.limit `newc'" "`yrs'"
-    capture noisily row "OhneGN" "ohne Gesundheit + M39-M48" s_sub "i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban `newc'" "`yrs'"
+    local base "i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban"
+    local hlth "i.health_bad i.limit"
+    local newu "i.x_HY060G i.x_PY090G i.x_PL080 i.x_OTHW c.x_AHC i.x_HCB"
+    local newr "i.x_HY060G i.x_OTHW c.x_AHC i.x_HCB"
+    capture noisily row "AlleU" "alle Kontrollen + M42-M48" s_sub "`base' `hlth' `newu'" "`yrs'"
+    capture noisily row "OhneGU" "ohne Gesundheit + M42-M48" s_sub "`base' `newu'" "`yrs'"
+    capture noisily row "AlleR" "alle Kontrollen + M42, M46-M48" s_sub "`base' `hlth' `newr'" "`yrs'"
+    capture noisily row "OhneGR" "ohne Gesundheit + M42, M46-M48" s_sub "`base' `newr'" "`yrs'"
 }
-else di as error "AlleN / OhneGN: no common survey year - skipped"
+else di as error "Joint models: no common survey year - skipped"
 postclose res
 
 use `results', clear

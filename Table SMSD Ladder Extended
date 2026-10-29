@@ -1,7 +1,8 @@
 *******************************************************************************************************************************************************************************************
 *** Title: SMSD ladder (Table 18 "Schutzeffekt der Erwerbsarbeit gegen SMD") - each additional variable as its own single-control model
 *** M1-M10 as before (year + one control); M11 ff.: year + one new variable (or a group of related variables jointly)
-*** At the end: all controls together and all controls without health (= former M11 / M12)
+*** M39-M48: own migration background, social assistance, unemployment, other earners in the household, housing costs
+*** At the end: all controls together and all controls without health (= former M11 / M12), and both plus M39-M48
 *** Each new variable is used in the survey years in which it exists (> 50 % valid); the columns pp_M1 / rel_M1 give M1
 *** (year only) on exactly the same sample, so the change through the control can be read directly
 *** Coding: categorical, missing = own category 99 (N constant within the available years); amounts (PY...) as "> 0"
@@ -79,8 +80,83 @@ replace x_PW191 = 1 if inrange(PW191, 0, 4)
 replace x_PW191 = 2 if inrange(PW191, 5, 6)
 replace x_PW191 = 3 if inrange(PW191, 7, 10)
 
+*** Additional checks (M39 ff.): own migration background, means-tested assistance, unemployment, other earners, housing costs
+* Own country of birth / citizenship (grouped strings LOC / EU / OTH, as PB230 / PB240)
+foreach v in PB210 PB220A {
+    capture confirm variable `v'
+    if _rc != 0 {
+        di as error "`v' not in the dataset"
+        gen str3 `v' = ""
+    }
+    capture confirm string variable `v'
+    if _rc != 0 {
+        tostring `v', replace force
+        replace `v' = "" if `v' == "."
+    }
+    replace `v' = strtrim(`v')
+    gen byte av_`v' = (`v' != "")
+    gen byte x_`v' = 99
+    replace x_`v' = 1 if `v' == "LOC"
+    replace x_`v' = 2 if `v' == "EU"
+    replace x_`v' = 3 if `v' == "OTH"
+}
+* Numeric raw variables
+foreach v in HY060G PY090G PL080 HH070 HY020 HX050 {
+    capture confirm variable `v'
+    if _rc != 0 {
+        di as error "`v' not in the dataset"
+        gen double `v' = .
+    }
+    capture confirm string variable `v'
+    if _rc == 0 {
+        replace `v' = subinstr(`v', ",", ".", .)
+        destring `v', replace force
+    }
+}
+* Household receives social assistance / minimum income (HY060G > 0)
+gen byte av_HY060G = !missing(HY060G)
+gen byte x_HY060G = (HY060G > 0 & !missing(HY060G))
+* Person receives unemployment benefits (PY090G > 0)
+gen byte av_PY090G = !missing(PY090G)
+gen byte x_PY090G = (PY090G > 0 & !missing(PY090G))
+* Months unemployed in the income reference year (PL080): 0 / 1-6 / 7-12, missing = 99
+gen byte av_PL080 = !missing(PL080)
+gen byte x_PL080 = 99
+replace x_PL080 = 0 if PL080 == 0
+replace x_PL080 = 1 if inrange(PL080, 1, 6)
+replace x_PL080 = 2 if inrange(PL080, 7, 12)
+* Other persons in the household working >= 7 months (18-64), excluding the person: 0 / 1 / 2+
+capture confirm variable any_worker
+if _rc != 0 {
+    di as error "any_worker not in the dataset - using worker"
+    gen byte any_worker = worker
+}
+bysort year idhh: egen n_work_hh = total(any_worker == 1)
+gen byte x_OTHW = n_work_hh - (any_worker == 1)
+replace x_OTHW = 2 if x_OTHW > 2 & !missing(x_OTHW)
+gen byte av_OTHW = !missing(x_OTHW)
+* Equivalised income after housing costs in % of the poverty threshold (HY020 / 12 - HH070) / HX050
+capture confirm variable poverty_threshold_rel
+if _rc != 0 {
+    di as error "poverty_threshold_rel not in the dataset - income after housing costs cannot be computed"
+    gen double poverty_threshold_rel = .
+}
+gen double x_AHC = 100 * ((HY020 / 12 - HH070) / HX050) / poverty_threshold_rel if !missing(HY020, HH070, HX050, poverty_threshold_rel) & HX050 > 0
+gen byte av_AHC = !missing(x_AHC)
+* Housing cost burden: housing costs in % of disposable household income (< 25 / 25-40 / > 40 incl. income <= 0), missing = 99
+gen double hc_share = 100 * (12 * HH070) / HY020 if !missing(HH070, HY020) & HY020 > 0
+gen byte x_HCB = 99
+replace x_HCB = 1 if hc_share < 25
+replace x_HCB = 2 if hc_share >= 25 & hc_share <= 40
+replace x_HCB = 3 if (hc_share > 40 & !missing(hc_share)) | (HY020 <= 0 & !missing(HH070))
+gen byte av_HCB = !missing(HH070, HY020)
+di _n as result "--- Additional variables by group (weighted means / shares) ---"
+table smd_grp if s_main == 1 [aw=dwt], statistic(mean x_HY060G x_PY090G x_AHC hc_share) nformat(%9.3f mean)
+tab x_OTHW smd_grp if s_main == 1 [aw=dwt], col nofreq
+tab x_PB210 smd_grp if s_main == 1 [aw=dwt], col nofreq
+
 *** Survey years per variable (> 50 % valid; PL016 / PL020 / PL025 checked among NEP, who are asked)
-local allnew "PL016 PB230 PB240 PH020 PH040 PH060 PY021N PY130N PY120G PW010 PW191 PT220 PT230 PT240 PT210 PT190 PHD01 PHD06 PL025 PL020"
+local allnew "PL016 PB230 PB240 PH020 PH040 PH060 PY021N PY130N PY120G PW010 PW191 PT220 PT230 PT240 PT210 PT190 PHD01 PHD06 PL025 PL020 PB210 PB220A HY060G PY090G PL080 OTHW AHC HCB"
 foreach v of local allnew {
     local base "s_main == 1"
     if inlist("`v'", "PL016", "PL020", "PL025") local base "s_main == 1 & smd_grp == 0"
@@ -169,7 +245,27 @@ local v37 "PL020"
 local l37 "Aktiv arbeitssuchend (PL020)"
 local v38 "PL020 PL025"
 local l38 "Arbeitssuche + Verfügbarkeit"
-local last = 38
+local v39 "PB210"
+local l39 "Eigenes Geburtsland (PB210)"
+local v40 "PB220A"
+local l40 "Staatsbürgerschaft (PB220A)"
+local v41 "PB210 PB220A"
+local l41 "Geburtsland + Staatsbürgerschaft"
+local v42 "HY060G"
+local l42 "Sozialhilfe/Mindestsicherung (HY060G > 0)"
+local v43 "PY090G"
+local l43 "Arbeitslosenleistungen (PY090G > 0)"
+local v44 "PL080"
+local l44 "Monate arbeitslos (PL080)"
+local v45 "PY090G PL080"
+local l45 "Arbeitslosenleistungen + Monate arbeitslos"
+local v46 "OTHW"
+local l46 "Weitere Erwerbstätige im Haushalt"
+local v47 "AHC"
+local l47 "Einkommen nach Wohnkosten (% Schwelle)"
+local v48 "HCB"
+local l48 "Wohnkostenbelastung (% Einkommen)"
+local last = 48
 
 *** One row: model with controls, plus M1 on the same sample
 capture program drop row
@@ -207,7 +303,8 @@ forvalues m = 11/`last' {
     local ctrl ""
     foreach v of local v`m' {
         local yrs : list yrs & yrs_`v'
-        local ctrl "`ctrl' i.x_`v'"
+        if "`v'" == "AHC" local ctrl "`ctrl' c.x_`v'"
+        else local ctrl "`ctrl' i.x_`v'"
     }
     if "`yrs'" == "" {
         di as error "M`m' `l`m'': no survey year with all variables - skipped"
@@ -221,6 +318,20 @@ forvalues m = 11/`last' {
 * All controls together / without health (former M11 / M12), all years
 row "Alle" "alle Kontrollen zusammen" s_main "i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban i.health_bad i.limit" "2018-2024"
 row "OhneG" "alle Kontrollen ohne Gesundheit" s_main "i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban" "2018-2024"
+* All controls + the additional checks (M39-M48 jointly; income after housing costs replaces nothing, enters in addition)
+local yrs "2018 2019 2020 2021 2022 2023 2024"
+foreach v in PB210 PB220A HY060G PY090G PL080 OTHW AHC HCB {
+    local yrs : list yrs & yrs_`v'
+}
+if "`yrs'" != "" {
+    local yrsc = subinstr(trim("`yrs'"), " ", ",", .)
+    capture drop s_sub
+    gen byte s_sub = (s_main == 1 & inlist(year, `yrsc'))
+    local newc "i.x_PB210 i.x_PB220A i.x_HY060G i.x_PY090G i.x_PL080 i.x_OTHW c.x_AHC i.x_HCB"
+    capture noisily row "AlleN" "alle Kontrollen + M39-M48" s_sub "i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban i.health_bad i.limit `newc'" "`yrs'"
+    capture noisily row "OhneGN" "ohne Gesundheit + M39-M48" s_sub "i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban `newc'" "`yrs'"
+}
+else di as error "AlleN / OhneGN: no common survey year - skipped"
 postclose res
 
 use `results', clear

@@ -1,11 +1,14 @@
 *******************************************************************************************************************************************************************************************
-*** Title: SMSD ladder (Table 18 "Schutzeffekt der Erwerbsarbeit gegen SMD") extended by additional controls
-*** Table A: pooled 2018-2024 - M1-M12 as before + new controls available in all years (one at a time, then all together)
-*** Table B: 2021-2024 only - new controls that exist only from 2021, next to M1/M11/M12 on the SAME sample
-*** Each row: OR [95% CI], p, predicted SMSD IWP / NEP, difference in pp (SE) and in % of NEP (SE), N
-*** Variables are assigned to A or B automatically from their availability (> 50 % valid in a survey year)
-*** PL016, PL020, PL025 are only asked of non-employed persons -> cannot be controls (they would reproduce the group)
-*** Input: SILC_All_Years_Adjusted.dta | Output: Ladder_extended_log.txt, sheets T18_A / T18_B in 05_Deprivation_Results.xlsx
+*** Title: SMSD ladder (Table 18 "Schutzeffekt der Erwerbsarbeit gegen SMD") - each additional variable as its own single-control model
+*** M1-M10 as before (year + one control); M11 ff.: year + one new variable (or a group of related variables jointly)
+*** At the end: all controls together and all controls without health (= former M11 / M12)
+*** Each new variable is used in the survey years in which it exists (> 50 % valid); the columns pp_M1 / rel_M1 give M1
+*** (year only) on exactly the same sample, so the change through the control can be read directly
+*** Coding: categorical, missing = own category 99 (N constant within the available years); amounts (PY...) as "> 0"
+***   PL016, PL020, PL025 are only asked of non-employed persons: IWP are set to "experience other than occasional work" (PL016 = 3)
+***   and to "no" (PL020 / PL025 = 2); the variables then separate the NEP among themselves
+***   PH030 (limitation) is already M10 and therefore not repeated
+*** Input: SILC_All_Years_Adjusted.dta | Output: Ladder_extended_log.txt, sheet T18_ext in 05_Deprivation_Results.xlsx
 *******************************************************************************************************************************************************************************************
 
 capture log close
@@ -19,8 +22,9 @@ gen byte s_main = !missing(smd_grp, smd)
 egen long hh_cl = group(year idhh)
 svyset hh_cl [pw=dwt], vce(linearized)
 
-*** New variables: destring, missing = own category so that N stays constant
-foreach v in PH020 PH040 PH060 PY021N PY130N PY120G PW010 PW191 {
+*** Prepare the new variables
+local numvars "PL016 PH020 PH040 PH060 PY021N PY130N PY120G PW010 PW191 PT220 PT230 PT240 PT210 PT190 PHD01 PHD06 PL025 PL020"
+foreach v of local numvars {
     capture confirm variable `v'
     if _rc != 0 {
         di as error "`v' not in the dataset"
@@ -31,6 +35,7 @@ foreach v in PH020 PH040 PH060 PY021N PY130N PY120G PW010 PW191 {
         replace `v' = subinstr(`v', ",", ".", .)
         destring `v', replace force
     }
+    gen byte av_`v' = !missing(`v')
 }
 foreach v in PB230 PB240 {
     capture confirm variable `v'
@@ -44,75 +49,137 @@ foreach v in PB230 PB240 {
         replace `v' = "" if `v' == "."
     }
     replace `v' = strtrim(`v')
+    gen byte av_`v' = (`v' != "")
+    gen byte x_`v' = 99
+    replace x_`v' = 1 if `v' == "LOC"
+    replace x_`v' = 2 if `v' == "EU"
+    replace x_`v' = 3 if `v' == "OTH"
 }
-gen byte x_chronic = cond(PH020 == 1, 1, cond(PH020 == 2, 0, 9))
-gen byte x_unmetmed = cond(PH040 == 1, 1, cond(PH040 == 2, 0, 9))
-gen byte x_unmetdent = cond(PH060 == 1, 1, cond(PH060 == 2, 0, 9))
-gen byte x_disben = (PY130N > 0 & !missing(PY130N))
-gen byte x_sickben = (PY120G > 0 & !missing(PY120G))
-gen byte x_compcar = (PY021N > 0 & !missing(PY021N))
-gen byte x_migback = 9
-replace x_migback = 0 if PB230 == "LOC" & PB240 == "LOC"
-replace x_migback = 1 if inlist(PB230, "EU", "OTH") | inlist(PB240, "EU", "OTH")
-gen byte x_lifesat = 9
-replace x_lifesat = 1 if inrange(PW010, 0, 5)
-replace x_lifesat = 2 if inrange(PW010, 6, 7)
-replace x_lifesat = 3 if inrange(PW010, 8, 10)
-gen byte x_trust = 9
-replace x_trust = 1 if inrange(PW191, 0, 4)
-replace x_trust = 2 if inrange(PW191, 5, 6)
-replace x_trust = 3 if inrange(PW191, 7, 10)
+* Categorical variables: original codes, missing = 99
+foreach v in PL016 PH020 PH040 PH060 PT220 PT230 PT240 PT210 PT190 PHD01 PHD06 PL025 PL020 {
+    gen int x_`v' = `v'
+    replace x_`v' = 99 if missing(x_`v')
+}
+* Only asked of non-employed persons: IWP set to experience / not looking / not available
+replace x_PL016 = 3 if smd_grp == 1 & missing(PL016)
+replace x_PL020 = 2 if smd_grp == 1 & missing(PL020)
+replace x_PL025 = 2 if smd_grp == 1 & missing(PL025)
+* Amounts: receives the income component (> 0)
+foreach v in PY021N PY130N PY120G {
+    gen byte x_`v' = (`v' > 0 & !missing(`v'))
+}
+* Life satisfaction and trust: 0-5 / 6-7 / 8-10 and 0-4 / 5-6 / 7-10, missing = 99
+gen byte x_PW010 = 99
+replace x_PW010 = 1 if inrange(PW010, 0, 5)
+replace x_PW010 = 2 if inrange(PW010, 6, 7)
+replace x_PW010 = 3 if inrange(PW010, 8, 10)
+gen byte x_PW191 = 99
+replace x_PW191 = 1 if inrange(PW191, 0, 4)
+replace x_PW191 = 2 if inrange(PW191, 5, 6)
+replace x_PW191 = 3 if inrange(PW191, 7, 10)
 
-* Availability check: survey years with > 50 % valid values among IWP + NEP
-local newvars "chronic unmetmed unmetdent disben sickben compcar migback lifesat trust"
-local raw_chronic "PH020"
-local raw_unmetmed "PH040"
-local raw_unmetdent "PH060"
-local raw_disben "PY130N"
-local raw_sickben "PY120G"
-local raw_compcar "PY021N"
-local raw_lifesat "PW010"
-local raw_trust "PW191"
-local listA ""
-local listB ""
-foreach x of local newvars {
-    capture drop av
-    if "`x'" == "migback" gen byte av = (PB230 != "" | PB240 != "")
-    else gen byte av = !missing(`raw_`x'')
-    local yrs ""
+*** Survey years per variable (> 50 % valid; PL016 / PL020 / PL025 checked among NEP, who are asked)
+local allnew "PL016 PB230 PB240 PH020 PH040 PH060 PY021N PY130N PY120G PW010 PW191 PT220 PT230 PT240 PT210 PT190 PHD01 PHD06 PL025 PL020"
+foreach v of local allnew {
+    local base "s_main == 1"
+    if inlist("`v'", "PL016", "PL020", "PL025") local base "s_main == 1 & smd_grp == 0"
+    local yrs_`v' ""
     forvalues y = 2018/2024 {
-        quietly summarize av if s_main == 1 & year == `y'
-        if r(mean) > 0.5 & r(N) > 0 local yrs "`yrs' `y'"
+        quietly summarize av_`v' if `base' & year == `y'
+        if r(N) > 0 & r(mean) > 0.5 local yrs_`v' "`yrs_`v'' `y'"
     }
-    local yrs = trim("`yrs'")
-    di as text %-10s "`x'" " available in: `yrs'"
-    if "`yrs'" == "2018 2019 2020 2021 2022 2023 2024" local listA "`listA' `x'"
-    else if "`yrs'" == "2021 2022 2023 2024" local listB "`listB' `x'"
-    else di as error "`x': not available in 2018-2024 or 2021-2024 -> not in a table"
+    di as text %-8s "`v'" " available in: `yrs_`v''"
 }
-di as result "Table A (2018-2024): `listA'"
-di as result "Table B (2021-2024): `listB'"
 
-*** Controls as in Table 18
-local c1 "i.year"
-local c2 "i.year i.age_grp"
-local c3 "i.year i.sex"
-local c4 "i.year i.hh_type"
-local c5 "i.year c.inc_rel"
-local c6 "i.year i.educ3"
-local c7 "i.year i.region"
-local c8 "i.year i.urban"
-local c9 "i.year i.health_bad"
-local c10 "i.year i.limit"
-local c11 "i.year i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban i.health_bad i.limit"
-local c12 "i.year i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban"
-local healthvars "chronic unmetmed unmetdent disben sickben"
+*** Models: M1-M10 as before, then the new variables (single and related groups jointly)
+local c1 ""
+local c2 "i.age_grp"
+local c3 "i.sex"
+local c4 "i.hh_type"
+local c5 "c.inc_rel"
+local c6 "i.educ3"
+local c7 "i.region"
+local c8 "i.urban"
+local c9 "i.health_bad"
+local c10 "i.limit"
+local l1 "nur Jahr"
+local l2 "Alter"
+local l3 "Geschlecht"
+local l4 "Haushaltstyp"
+local l5 "Einkommensposition"
+local l6 "Bildung"
+local l7 "Region"
+local l8 "Urbanisierungsgrad"
+local l9 "Gesundheitszustand"
+local l10 "Einschränkung im Alltag"
+local v11 "PL016"
+local l11 "Frühere Erwerbserfahrung (PL016)"
+local v12 "PB230"
+local l12 "Geburtsland Vater (PB230)"
+local v13 "PB240"
+local l13 "Geburtsland Mutter (PB240)"
+local v14 "PB230 PB240"
+local l14 "Geburtsland beider Eltern"
+local v15 "PH020"
+local l15 "Chronische Krankheit (PH020)"
+local v16 "PH040"
+local l16 "Unerfüllter Behandlungsbedarf (PH040)"
+local v17 "PH060"
+local l17 "Unerfüllter Zahnbehandlungsbedarf (PH060)"
+local v18 "PH040 PH060"
+local l18 "Unerfüllter Bedarf, beide"
+local v19 "PY021N"
+local l19 "Firmenwagen (PY021N > 0)"
+local v20 "PY130N"
+local l20 "Invaliditätsleistungen (PY130N > 0)"
+local v21 "PY120G"
+local l21 "Krankengeld (PY120G > 0)"
+local v22 "PY130N PY120G"
+local l22 "Invaliditätsleistungen + Krankengeld"
+local v23 "PW010"
+local l23 "Lebenszufriedenheit (PW010)"
+local v24 "PW191"
+local l24 "Vertrauen in andere (PW191)"
+local v25 "PW010 PW191"
+local l25 "Lebenszufriedenheit + Vertrauen"
+local v26 "PT220"
+local l26 "Haushaltstyp mit 14 (PT220)"
+local v27 "PT230"
+local l27 "Mutter anwesend mit 14 (PT230)"
+local v28 "PT240"
+local l28 "Vater anwesend mit 14 (PT240)"
+local v29 "PT230 PT240"
+local l29 "Mutter + Vater anwesend mit 14"
+local v30 "PT210"
+local l30 "Wohnstatus mit 14 (PT210)"
+local v31 "PT190"
+local l31 "Finanzielle Lage mit 14 (PT190)"
+local v32 "PT190 PT210 PT220 PT230 PT240"
+local l32 "Herkunftsfamilie mit 14, alle"
+local v33 "PHD01"
+local l33 "Frühere Wohnschwierigkeiten (PHD01)"
+local v34 "PHD06"
+local l34 "Schwierigkeiten bei Miete (PHD06)"
+local v35 "PHD01 PHD06"
+local l35 "Wohnschwierigkeiten, beide"
+local v36 "PL025"
+local l36 "Verfügbar für Arbeit (PL025)"
+local v37 "PL020"
+local l37 "Aktiv arbeitssuchend (PL020)"
+local v38 "PL020 PL025"
+local l38 "Arbeitssuche + Verfügbarkeit"
+local last = 38
 
-*** One row: OR, CI, p, predicted shares, pp and % difference
+*** One row: model with controls, plus M1 on the same sample
 capture program drop row
 program define row
-    args tab model label sample controls
-    quietly svy, subpop(`sample'): logit smd i.smd_grp `controls'
+    args model label sample controls years
+    quietly svy, subpop(`sample'): logit smd i.smd_grp i.year
+    quietly margins smd_grp, subpop(`sample') vce(unconditional) post
+    quietly nlcom (pp: 100 * (_b[1.smd_grp] - _b[0bn.smd_grp])) (rel: 100 * (_b[1.smd_grp] / _b[0bn.smd_grp] - 1)), post
+    local pp1 = _b[pp]
+    local rel1 = _b[rel]
+    quietly svy, subpop(`sample'): logit smd i.smd_grp i.year `controls'
     local b = _b[1.smd_grp]
     local se = _se[1.smd_grp]
     local crit = invttail(e(df_r), 0.025)
@@ -122,84 +189,46 @@ program define row
     local s1 = 100 * _b[1.smd_grp]
     local s0 = 100 * _b[0bn.smd_grp]
     quietly nlcom (pp: 100 * (_b[1.smd_grp] - _b[0bn.smd_grp])) (rel: 100 * (_b[1.smd_grp] / _b[0bn.smd_grp] - 1)), post
-    post res ("`tab'") ("`model'") ("`label'") (exp(`b')) (exp(`b' - `crit' * `se')) (exp(`b' + `crit' * `se')) (`p') (`s1') (`s0') (_b[pp]) (_se[pp]) (_b[rel]) (_se[rel]) (`n')
-    di as text %-5s "`model'" %-32s " `label'" " OR " %5.3f exp(`b') "  p=" %6.4f `p' "  IWP " %5.2f `s1' "  NEP " %5.2f `s0' "  " %6.2f _b[pp] " pp (" %4.2f _se[pp] ")  " %6.1f _b[rel] " % (" %4.1f _se[rel] ")  N=" `n'
+    post res ("`model'") ("`label'") ("`years'") (exp(`b')) (exp(`b' - `crit' * `se')) (exp(`b' + `crit' * `se')) (`p') (`s1') (`s0') (_b[pp]) (_se[pp]) (_b[rel]) (_se[rel]) (`pp1') (`rel1') (`n')
+    di as text %-6s "`model'" %-42s " `label'" " OR " %5.3f exp(`b') " p=" %6.4f `p' " IWP " %5.2f `s1' " NEP " %5.2f `s0' " " %6.2f _b[pp] " pp (" %4.2f _se[pp] ") " %6.1f _b[rel] " % (" %4.1f _se[rel] ") | M1 same sample " %6.2f `pp1' " pp " %6.1f `rel1' " % | N=" `n' " | `years'"
 end
 
 tempfile results
-postfile res str2 tab str6 model str40 label double(or or_lo or_hi p s_iwp s_nep pp pp_se rel rel_se n) using `results', replace
+postfile res str6 model str45 label str40 years double(or or_lo or_hi p s_iwp s_nep pp pp_se rel rel_se pp_M1 rel_M1 n) using `results', replace
 
-local lab1 "nur Jahr"
-local lab2 "Alter"
-local lab3 "Geschlecht"
-local lab4 "Haushaltstyp"
-local lab5 "Einkommensposition"
-local lab6 "Bildung"
-local lab7 "Region"
-local lab8 "Urbanisierungsgrad"
-local lab9 "Gesundheitszustand"
-local lab10 "Einschränkung im Alltag"
-local lab11 "alle Kontrollen zusammen"
-local lab12 "alle Kontrollen ohne Gesundheit"
-local lab_chronic "Chronische Krankheit"
-local lab_unmetmed "Unerfüllter Behandlungsbedarf"
-local lab_unmetdent "Unerfüllter Zahnbehandlungsbedarf"
-local lab_disben "Invaliditätsleistungen"
-local lab_sickben "Krankengeld"
-local lab_compcar "Firmenwagen"
-local lab_migback "Migrationshintergrund (Eltern)"
-local lab_lifesat "Lebenszufriedenheit"
-local lab_trust "Vertrauen in andere"
-
-foreach t in A B {
-    if "`t'" == "A" {
-        local lst "`listA'"
-        capture drop s_t
-        gen byte s_t = s_main
-        di _n(2) as result "=================== Table A: pooled 2018-2024 ==================="
-    }
-    else {
-        local lst "`listB'"
-        if "`lst'" == "" continue
-        capture drop s_t
-        gen byte s_t = s_main & inrange(year, 2021, 2024)
-        di _n(2) as result "=================== Table B: 2021-2024 ==================="
-    }
-    * Table 18 rows (in Table B on the 2021-2024 sample as reference)
-    forvalues m = 1/12 {
-        if "`t'" == "B" & !inlist(`m', 1, 11, 12) continue
-        row `t' "M`m'" "`lab`m''" s_t "`c`m''"
-    }
-    * New controls one at a time (year + X), then added to M11 and M12
-    local k = 12
-    local addall ""
-    local addnohealth ""
-    foreach x of local lst {
-        local k = `k' + 1
-        row `t' "M`k'" "`lab_`x''" s_t "i.year i.x_`x'"
-        local addall "`addall' i.x_`x'"
-        local ish : list x in healthvars
-        if `ish' == 0 local addnohealth "`addnohealth' i.x_`x'"
-    }
-    if "`lst'" != "" {
-        row `t' "M11+" "alle Kontrollen + neue Variablen" s_t "`c11' `addall'"
-        row `t' "M12+" "ohne Gesundheit + neue (ohne Gesundheit)" s_t "`c12' `addnohealth'"
-    }
+* M1-M10: all years
+forvalues m = 1/10 {
+    row "M`m'" "`l`m''" s_main "`c`m''" "2018-2024"
 }
+* M11 ff.: new variables, in the years in which all variables of the model exist
+forvalues m = 11/`last' {
+    local yrs "2018 2019 2020 2021 2022 2023 2024"
+    local ctrl ""
+    foreach v of local v`m' {
+        local yrs : list yrs & yrs_`v'
+        local ctrl "`ctrl' i.x_`v'"
+    }
+    if "`yrs'" == "" {
+        di as error "M`m' `l`m'': no survey year with all variables - skipped"
+        continue
+    }
+    local yrsc = subinstr(trim("`yrs'"), " ", ",", .)
+    capture drop s_m
+    gen byte s_m = (s_main == 1 & inlist(year, `yrsc'))
+    capture noisily row "M`m'" "`l`m''" s_m "`ctrl'" "`yrs'"
+}
+* All controls together / without health (former M11 / M12), all years
+row "Alle" "alle Kontrollen zusammen" s_main "i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban i.health_bad i.limit" "2018-2024"
+row "OhneG" "alle Kontrollen ohne Gesundheit" s_main "i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban" "2018-2024"
 postclose res
 
 use `results', clear
 format or or_lo or_hi %5.3f
 format p %6.4f
-format s_iwp s_nep pp pp_se %6.2f
-format rel rel_se %6.1f
-list tab model label or or_lo or_hi p s_iwp s_nep pp pp_se rel rel_se n, noobs abbreviate(8) sepby(tab) linesize(200)
-preserve
-keep if tab == "A"
-export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("T18_A", replace) firstrow(variables)
-restore
-keep if tab == "B"
-if _N > 0 export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("T18_B", replace) firstrow(variables)
+format s_iwp s_nep pp pp_se pp_M1 %6.2f
+format rel rel_se rel_M1 %6.1f
+list model label or or_lo or_hi p s_iwp s_nep pp pp_se rel rel_se pp_M1 rel_M1 n years, noobs abbreviate(8) separator(0) linesize(250)
+export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("T18_ext", replace) firstrow(variables)
 
 di as result "=== FERTIG ==="
 log close

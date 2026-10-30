@@ -1,0 +1,205 @@
+*******************************************************************************************************************************************************************************************
+*** Title: Life satisfaction and SMSD - which comes first? (EU-SILC longitudinal, Austria)
+*** Aim: Cross-sectionally, life satisfaction (PW010) reduces the IWP-NEP gap in SMSD, but it may itself be a consequence of
+***      deprivation (reverse causality). With two-year pairs of the same persons we check the temporal order:
+***   PART A: Descriptives
+***           A1 sample by year
+***           A2 life satisfaction in t-1 and t by SMSD transition (stays out / enters / exits / stays in):
+***              are those who ENTER SMSD already less satisfied BEFORE entering? Does satisfaction fall on entry?
+***           A3 change in life satisfaction by group transition (IWP / NEP in t-1 -> t)
+***   PART B: Cross-lagged models (persons 18-64, larger sample for power)
+***           B1 SMSD in t on life satisfaction in t-1, controlling SMSD in t-1   (satisfaction -> deprivation)
+***           B2 life satisfaction in t on SMSD in t-1, controlling satisfaction in t-1 (deprivation -> satisfaction)
+***           Both also per standard deviation, so the two directions can be compared
+***   PART C: IWP-NEP gap in SMSD (IWP Employees vs. AROP w/o IWP in t) without / with life satisfaction in t-1
+***           G1 year | G2 + controls (as M12, without health) | G3 G2 + life satisfaction in t-1 (same sample)
+*** Data: PW010 is in the longitudinal UDB only from release 2021 and filled only for survey years 2018 and 2021-2023 (2024);
+***       SMSD in the longitudinal files 2018-2023 -> usable pairs t-1 -> t: 2021 -> 2022 (release 2022), 2022 -> 2023 (release 2023),
+***       and 2023 -> 2024 if the 2024 release contains SMSD. Each release contributes its last year pair, weight RB062
+***       PW010 is filled across releases for the same person-year (as the final-year-only variables in L02)
+*** Controls: age group, sex, household type, income position, education, region, urbanisation (in t)
+*** Standard errors clustered by household (release x household ID)
+*** Input: SILC_Long_Prepared.dta (L02)
+*** Output: L05_LifeSat_SMSD_log.txt, L05_LifeSat_SMSD.xlsx
+*******************************************************************************************************************************************************************************************
+
+capture log close
+clear all
+set more off
+set varabbrev off
+
+log using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/L05_LifeSat_SMSD_log.txt", text replace
+
+use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/SILC_Long_Prepared.dta", clear
+
+*** Life satisfaction: destring, valid 0-10 only, fill across releases for the same person-year
+capture confirm variable PW010
+if _rc != 0 {
+    di as error "PW010 not in SILC_Long_Prepared.dta - check that L01 keeps all variables of the P files"
+    exit 111
+}
+capture confirm string variable PW010
+if _rc == 0 {
+    replace PW010 = subinstr(PW010, ",", ".", .)
+    destring PW010, replace force
+}
+replace PW010 = . if !inrange(PW010, 0, 10)
+bysort pid year: egen double ls = max(PW010)
+label variable ls "Overall life satisfaction (0-10)"
+di _n as result "--- Valid life satisfaction by survey year (all releases, person-years) ---"
+tab year if !missing(ls)
+
+*** Previous-year values of the same person within the same release
+bysort release pid (year): gen double ls_lag = ls[_n - 1] if year[_n - 1] == year - 1
+bysort release pid (year): gen byte smd_lag = smd[_n - 1] if year[_n - 1] == year - 1
+bysort release pid (year): gen byte state_lag = state[_n - 1] if year[_n - 1] == year - 1
+gen double ls_chg = ls - ls_lag
+label variable ls_lag "Life satisfaction in t-1"
+label variable smd_lag "SMSD in t-1"
+label variable ls_chg "Change in life satisfaction t-1 -> t"
+
+*** SMSD transition t-1 -> t
+gen byte smd_trans = .
+replace smd_trans = 1 if smd_lag == 0 & smd == 0
+replace smd_trans = 2 if smd_lag == 0 & smd == 1
+replace smd_trans = 3 if smd_lag == 1 & smd == 0
+replace smd_trans = 4 if smd_lag == 1 & smd == 1
+label define smdtrans 1 "Not SMSD in t-1 and t" 2 "Enters SMSD" 3 "Exits SMSD" 4 "SMSD in t-1 and t"
+label values smd_trans smdtrans
+
+*** Each release contributes its last year pair (as in L03 / L04)
+keep if year == release & RB062 > 0 & !missing(RB062)
+gen byte s_all = inrange(dag, 18, 64) & !missing(smd, smd_lag, ls, ls_lag, inc_rel)
+gen byte s_grp = inlist(smd_grp, 0, 1) & !missing(smd, ls_lag, inc_rel)
+
+capture drop hh_cl
+egen long hh_cl = group(release idhh)
+svyset hh_cl [pw=RB062], vce(linearized)
+
+local ctrl "i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban"
+
+tempfile results
+postfile res str10 part str30 model double(est se p n) using `results', replace
+
+
+*******************************************************************************************************************************************************************************************
+*** PART A: Descriptives
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART A: descriptives ==================="
+
+di _n as result "--- A1: unweighted N by year (18-64 with valid SMSD and life satisfaction in t-1 and t; IWP / NEP in t) ---"
+tab year if s_all == 1
+tab year smd_grp if s_grp == 1
+
+di _n as result "--- A2: life satisfaction in t-1, in t and change, by SMSD transition (18-64, weighted means, unweighted N) ---"
+table smd_trans if s_all == 1 [aw=RB062], statistic(mean ls_lag ls ls_chg) statistic(frequency) nformat(%9.2f mean)
+* Key comparison 1: before entering, are entrants already less satisfied than those who stay out? (life satisfaction in t-1)
+svy, subpop(if s_all == 1 & smd_lag == 0): regress ls_lag i.smd i.year
+di as text "Difference in life satisfaction in t-1, enters SMSD vs. stays out (points): " %6.2f _b[1.smd] " (SE " %4.2f _se[1.smd] ")"
+post res ("A2") ("LS(t-1): enter vs stay out") (_b[1.smd]) (_se[1.smd]) (2 * ttail(e(df_r), abs(_b[1.smd] / _se[1.smd]))) (e(N_sub))
+* Key comparison 2: does satisfaction fall more on entry than among those who stay out? (change t-1 -> t)
+svy, subpop(if s_all == 1 & smd_lag == 0): regress ls_chg i.smd i.year
+di as text "Difference in the change of life satisfaction, enters SMSD vs. stays out (points): " %6.2f _b[1.smd] " (SE " %4.2f _se[1.smd] ")"
+post res ("A2") ("dLS: enter vs stay out") (_b[1.smd]) (_se[1.smd]) (2 * ttail(e(df_r), abs(_b[1.smd] / _se[1.smd]))) (e(N_sub))
+* Exits: does satisfaction rise on exit compared with those who stay in?
+capture noisily {
+    svy, subpop(if s_all == 1 & smd_lag == 1): regress ls_chg i.smd i.year
+    di as text "Difference in the change of life satisfaction, stays in vs. exits SMSD (points): " %6.2f _b[1.smd] " (SE " %4.2f _se[1.smd] ")"
+    post res ("A2") ("dLS: stay in vs exit") (_b[1.smd]) (_se[1.smd]) (2 * ttail(e(df_r), abs(_b[1.smd] / _se[1.smd]))) (e(N_sub))
+}
+
+di _n as result "--- A3: change in life satisfaction by group transition t-1 -> t (1 = IWP Employee, 2 = AROP w/o IWP; weighted means) ---"
+table state_lag state if s_all == 1 & inlist(state_lag, 1, 2) & inlist(state, 1, 2) [aw=RB062], statistic(mean ls_lag ls ls_chg) statistic(frequency) nformat(%9.2f mean)
+
+
+*******************************************************************************************************************************************************************************************
+*** PART B: Cross-lagged models (18-64)
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART B: cross-lagged models (18-64) ==================="
+
+quietly summarize ls_lag [aw=RB062] if s_all == 1
+local sd_ls = r(sd)
+di as text "SD of life satisfaction in t-1: " %5.2f `sd_ls'
+
+*** B1: satisfaction in t-1 -> SMSD in t (controlling SMSD in t-1)
+svy, subpop(s_all): logit smd c.ls_lag i.smd_lag i.year `ctrl'
+local n = e(N_sub)
+margins, dydx(ls_lag) subpop(s_all) vce(unconditional) post
+local b = 100 * _b[ls_lag]
+local s = 100 * _se[ls_lag]
+local p = 2 * normal(-abs(`b' / `s'))
+di as text "B1: +1 point life satisfaction in t-1 -> SMSD in t changes by " %6.2f `b' " pp (SE " %4.2f `s' "); per SD: " %6.2f `b' * `sd_ls' " pp"
+post res ("B1") ("LS(t-1) -> SMSD(t), pp per point") (`b') (`s') (`p') (`n')
+post res ("B1") ("LS(t-1) -> SMSD(t), pp per SD") (`b' * `sd_ls') (`s' * `sd_ls') (`p') (`n')
+
+* B1 entry only: among those not in SMSD in t-1
+capture noisily {
+    svy, subpop(if s_all == 1 & smd_lag == 0): logit smd c.ls_lag i.year `ctrl'
+    local n = e(N_sub)
+    margins, dydx(ls_lag) subpop(if s_all == 1 & smd_lag == 0) vce(unconditional) post
+    local b = 100 * _b[ls_lag]
+    local s = 100 * _se[ls_lag]
+    local p = 2 * normal(-abs(`b' / `s'))
+    di as text "B1 entry: +1 point life satisfaction in t-1 -> entry into SMSD changes by " %6.2f `b' " pp (SE " %4.2f `s' ")"
+    post res ("B1") ("LS(t-1) -> entry SMSD, pp/point") (`b') (`s') (`p') (`n')
+}
+
+*** B2: SMSD in t-1 -> satisfaction in t (controlling satisfaction in t-1)
+svy, subpop(s_all): regress ls i.smd_lag c.ls_lag i.year `ctrl'
+local b = _b[1.smd_lag]
+local s = _se[1.smd_lag]
+local p = 2 * ttail(e(df_r), abs(`b' / `s'))
+local n = e(N_sub)
+di as text "B2: SMSD in t-1 -> life satisfaction in t changes by " %6.2f `b' " points (SE " %4.2f `s' "); in SD: " %6.2f `b' / `sd_ls'
+post res ("B2") ("SMSD(t-1) -> LS(t), points") (`b') (`s') (`p') (`n')
+post res ("B2") ("SMSD(t-1) -> LS(t), SD") (`b' / `sd_ls') (`s' / `sd_ls') (`p') (`n')
+
+di _n as text "Reading: if B1 is clearly different from 0 and B2 is not, lower satisfaction precedes deprivation;"
+di as text "if B2 is clearly different from 0 and B1 is not, deprivation lowers satisfaction (reverse causality);"
+di as text "if both are, the relationship runs in both directions. Small N: interpret with the standard errors."
+
+
+*******************************************************************************************************************************************************************************************
+*** PART C: IWP-NEP gap in SMSD without / with life satisfaction in t-1 (same sample)
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART C: IWP-NEP gap in SMSD ==================="
+
+capture program drop gap
+program define gap
+    args model sub controls
+    quietly svy, subpop(`sub'): logit smd i.smd_grp i.year `controls'
+    local n = e(N_sub)
+    quietly margins smd_grp, subpop(`sub') vce(unconditional) post
+    local r0 = 100 * _b[0bn.smd_grp]
+    local r1 = 100 * _b[1.smd_grp]
+    quietly nlcom (pp: 100 * (_b[1.smd_grp] - _b[0bn.smd_grp])) (rel: 100 * (_b[1.smd_grp] / _b[0bn.smd_grp] - 1)), post
+    local p = 2 * normal(-abs(_b[pp] / _se[pp]))
+    di as text %-4s "`model'" "  IWP " %5.1f `r1' "  NEP " %5.1f `r0' "  diff " %6.2f _b[pp] " pp (SE " %4.2f _se[pp] ")  " %6.1f _b[rel] " % (SE " %4.1f _se[rel] ")  p=" %6.4f `p' "  N=" `n'
+    post res ("C") ("`model' pp") (_b[pp]) (_se[pp]) (`p') (`n')
+    post res ("C") ("`model' %") (_b[rel]) (_se[rel]) (`p') (`n')
+end
+
+gap "G1" s_grp ""
+gap "G2" s_grp "`ctrl'"
+gap "G3" s_grp "`ctrl' c.ls_lag"
+di as text "G1 year | G2 + controls (M12 without health) | G3 G2 + life satisfaction in t-1"
+
+
+*******************************************************************************************************************************************************************************************
+*** Export
+*******************************************************************************************************************************************************************************************
+
+postclose res
+use `results', clear
+format est se %9.3f
+format p %6.4f
+di _n as result "=== Summary ==="
+list, noobs abbreviate(10) separator(0)
+export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/L05_LifeSat_SMSD.xlsx", sheet("results", replace) firstrow(variables)
+
+di as result "=== FERTIG ==="
+
+log close

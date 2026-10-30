@@ -12,6 +12,8 @@
 ***           B2 life satisfaction in t on SMSD in t-1, controlling satisfaction in t-1 (deprivation -> satisfaction)
 ***           Both also per standard deviation, so the two directions can be compared
 ***   PART C: IWP-NEP gap in SMSD (IWP Employees vs. AROP w/o IWP in t) without / with life satisfaction in t-1
+***   PART D: A2, B1, B2, C again controlling the NUMBER of SMSD items lacking in t-1 (0-13) instead of SMSD yes/no:
+***           is lower satisfaction more than being close to the deprivation threshold already?
 ***           G1 year | G2 + controls (as M12, without health) | G3 G2 + life satisfaction in t-1 (same sample)
 *** Data: PW010 is in the longitudinal UDB only from release 2021 and filled only for survey years 2018 and 2021-2023 (2024);
 ***       SMSD in the longitudinal files 2018-2023 -> usable pairs t-1 -> t: 2021 -> 2022 (release 2022), 2022 -> 2023 (release 2023),
@@ -53,6 +55,15 @@ tab year if !missing(ls)
 bysort release pid (year): gen double ls_lag = ls[_n - 1] if year[_n - 1] == year - 1
 bysort release pid (year): gen byte smd_lag = smd[_n - 1] if year[_n - 1] == year - 1
 bysort release pid (year): gen byte state_lag = state[_n - 1] if year[_n - 1] == year - 1
+* Number of SMSD items lacking (0-13, only if all 13 valid) in t-1: captures persons just below the threshold of 7
+capture confirm variable smsd_n
+if _rc != 0 {
+    di as error "smsd_n not in SILC_Long_Prepared.dta - check L02"
+    exit 111
+}
+gen byte smsd_cnt = smsd_n if smsd_valid == 13
+bysort release pid (year): gen byte cnt_lag = smsd_cnt[_n - 1] if year[_n - 1] == year - 1
+label variable cnt_lag "Number of SMSD items lacking in t-1 (0-13)"
 gen double ls_chg = ls - ls_lag
 label variable ls_lag "Life satisfaction in t-1"
 label variable smd_lag "SMSD in t-1"
@@ -79,7 +90,7 @@ svyset hh_cl [pw=RB062], vce(linearized)
 local ctrl "i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban"
 
 tempfile results
-postfile res str10 part str30 model double(est se p n) using `results', replace
+postfile res str10 part str40 model double(est se p n) using `results', replace
 
 
 *******************************************************************************************************************************************************************************************
@@ -186,6 +197,84 @@ gap "G1" s_grp ""
 gap "G2" s_grp "`ctrl'"
 gap "G3" s_grp "`ctrl' c.ls_lag"
 di as text "G1 year | G2 + controls (M12 without health) | G3 G2 + life satisfaction in t-1"
+
+
+*******************************************************************************************************************************************************************************************
+*** PART D: Is it life satisfaction or deprivation just below the threshold?
+*** SMSD in t-1 (yes/no) does not separate persons with 0 items lacking from persons with 5-6 items lacking. If those who enter
+*** SMSD were already close to the threshold, their lower satisfaction in t-1 may only reflect existing hardship.
+*** -> repeat A2, B1, B2 and C controlling the NUMBER of items lacking in t-1 (0-13) instead of SMSD yes/no, on the same sample
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART D: controlling the number of items lacking in t-1 ==================="
+
+gen byte s_d = (s_all == 1 & !missing(cnt_lag))
+gen byte s_dg = (s_grp == 1 & !missing(cnt_lag))
+* Items lacking in t-1 grouped 0 / 1 / 2 / 3-4 / 5-6 / 7+ (7+ = SMSD in t-1)
+gen byte cnt_lag_g = .
+replace cnt_lag_g = 0 if cnt_lag == 0
+replace cnt_lag_g = 1 if cnt_lag == 1
+replace cnt_lag_g = 2 if cnt_lag == 2
+replace cnt_lag_g = 3 if inrange(cnt_lag, 3, 4)
+replace cnt_lag_g = 4 if inrange(cnt_lag, 5, 6)
+replace cnt_lag_g = 5 if cnt_lag >= 7 & !missing(cnt_lag)
+label define cntg 0 "0 items" 1 "1 item" 2 "2 items" 3 "3-4 items" 4 "5-6 items" 5 "7+ items (SMSD)"
+label values cnt_lag_g cntg
+
+di _n as result "--- D0: items lacking in t-1 by SMSD transition (18-64, weighted means / row %) ---"
+table smd_trans if s_d == 1 [aw=RB062], statistic(mean cnt_lag) statistic(frequency) nformat(%9.2f mean)
+tab cnt_lag_g smd_trans if s_d == 1 & smd_lag == 0 [aw=RB062], col nofreq
+di _n as result "--- D0: entry rate into SMSD and life satisfaction in t-1 by items lacking in t-1 (not SMSD in t-1) ---"
+table cnt_lag_g if s_d == 1 & smd_lag == 0 [aw=RB062], statistic(mean smd ls_lag) statistic(frequency) nformat(%9.3f mean)
+
+*** D1 (as A2): life satisfaction in t-1, entrants vs. those who stay out, controlling items lacking in t-1
+svy, subpop(if s_d == 1 & smd_lag == 0): regress ls_lag i.smd i.year
+local b0 = _b[1.smd]
+svy, subpop(if s_d == 1 & smd_lag == 0): regress ls_lag i.smd i.cnt_lag_g i.year
+di as text "D1: LS(t-1) entrants vs. stay out: without item count " %6.2f `b0' " | with item count " %6.2f _b[1.smd] " (SE " %4.2f _se[1.smd] ")"
+post res ("D1") ("LS(t-1): enter vs out, no count") (`b0') (.) (.) (e(N_sub))
+post res ("D1") ("LS(t-1): enter vs out, + count") (_b[1.smd]) (_se[1.smd]) (2 * ttail(e(df_r), abs(_b[1.smd] / _se[1.smd]))) (e(N_sub))
+
+*** D2 (as B1): satisfaction in t-1 -> SMSD in t, with SMSD yes/no vs. with the item count in t-1 (same sample)
+foreach v in "i.smd_lag" "i.cnt_lag_g" "c.cnt_lag" {
+    quietly svy, subpop(s_d): logit smd c.ls_lag `v' i.year `ctrl'
+    local n = e(N_sub)
+    quietly margins, dydx(ls_lag) subpop(s_d) vce(unconditional) post
+    local b = 100 * _b[ls_lag]
+    local s = 100 * _se[ls_lag]
+    local p = 2 * normal(-abs(`b' / `s'))
+    di as text "D2: LS(t-1) -> SMSD(t), controlling `v': " %6.2f `b' " pp per point (SE " %4.2f `s' ", p=" %6.4f `p' "); per SD " %6.2f `b' * `sd_ls' " pp"
+    post res ("D2") ("LS->SMSD pp/pt, `v'") (`b') (`s') (`p') (`n')
+}
+* Entry only, controlling the item count among those not in SMSD in t-1
+capture noisily {
+    quietly svy, subpop(if s_d == 1 & smd_lag == 0): logit smd c.ls_lag i.cnt_lag_g i.year `ctrl'
+    local n = e(N_sub)
+    quietly margins, dydx(ls_lag) subpop(if s_d == 1 & smd_lag == 0) vce(unconditional) post
+    local b = 100 * _b[ls_lag]
+    local s = 100 * _se[ls_lag]
+    local p = 2 * normal(-abs(`b' / `s'))
+    di as text "D2 entry: LS(t-1) -> entry into SMSD, controlling the item count: " %6.2f `b' " pp per point (SE " %4.2f `s' ", p=" %6.4f `p' ")"
+    post res ("D2") ("LS->entry pp/pt, + count") (`b') (`s') (`p') (`n')
+}
+
+*** D3 (as B2): SMSD in t-1 -> satisfaction in t; and the item count in t-1 -> satisfaction in t
+quietly svy, subpop(s_d): regress ls i.smd_lag c.ls_lag i.year `ctrl'
+di as text "D3: SMSD(t-1) -> LS(t): " %6.2f _b[1.smd_lag] " points (SE " %4.2f _se[1.smd_lag] ")"
+post res ("D3") ("SMSD(t-1) -> LS(t), points") (_b[1.smd_lag]) (_se[1.smd_lag]) (2 * ttail(e(df_r), abs(_b[1.smd_lag] / _se[1.smd_lag]))) (e(N_sub))
+quietly svy, subpop(s_d): regress ls c.cnt_lag c.ls_lag i.year `ctrl'
+di as text "D3: +1 item lacking in t-1 -> LS(t): " %6.2f _b[cnt_lag] " points (SE " %4.2f _se[cnt_lag] ")"
+post res ("D3") ("+1 item(t-1) -> LS(t), points") (_b[cnt_lag]) (_se[cnt_lag]) (2 * ttail(e(df_r), abs(_b[cnt_lag] / _se[cnt_lag]))) (e(N_sub))
+
+*** D4 (as C): IWP-NEP gap with the item count in t-1, and with item count + life satisfaction in t-1 (same sample)
+gap "G2d" s_dg "`ctrl'"
+gap "G3d" s_dg "`ctrl' c.ls_lag"
+gap "G4d" s_dg "`ctrl' i.cnt_lag_g"
+gap "G5d" s_dg "`ctrl' i.cnt_lag_g c.ls_lag"
+di as text "G2d controls | G3d + LS(t-1) | G4d + items lacking in t-1 | G5d + both (all on the sample with a valid item count in t-1)"
+
+di _n as text "Reading: if the effect of LS(t-1) in D1/D2 stays similar with the item count, satisfaction predicts deprivation beyond"
+di as text "existing hardship; if it shrinks towards 0, lower satisfaction mainly reflected being close to the threshold already."
 
 
 *******************************************************************************************************************************************************************************************

@@ -1,0 +1,343 @@
+*******************************************************************************************************************************************************************************************
+*** Title: Health, employment and SMSD among the income-poor (EU-SILC longitudinal, Austria)
+*** Aim: Cross-sectionally, health (PH010, PH020, PH030) is the only control that clearly reduces the IWP-NEP gap in SMSD
+***      (M12 -> M11: about 40%). Health may be SELECTION (ill persons do not work / lose their job) or a CONSEQUENCE
+***      (non-employment worsens health). With the same persons over time:
+***   PART A: Health by group (IWP Employees / AROP w/o IWP and NEP by current economic status)
+***   PART B: Flows between group x health states t-1 -> t (basis for the flow chart / alluvial):
+***           B1 outflow matrix (row %): where do healthy / limited IWP and NEP go?
+***           B2 inflow matrix (column %): where do limited NEP come from - were they already limited NEP, or IWP who became limited?
+***   PART C: Selection, return and consequence (logit, controls, gap in pp and %):
+***           C1 IWP in t-1 -> NEP in t by health in t-1 (selection: do limited IWP leave work more often?)
+***           C2 IWP in t-1: exit to NEP by health change t-1 -> t (stays healthy / becomes limited / recovers / stays limited)
+***           C3 NEP in t-1 -> working in t by health in t-1 (return: do limited NEP return to work?)
+***           C4 / C5 as C1 / C3 with CURRENT economic status at interview (PL031/PL032): same time point as health (cleaner order)
+***           C6 healthy in t-1 -> limited / bad health in t by group in t-1 (consequence: does health worsen more among NEP?)
+***   PART D: 4-year health trajectories by starting group (never / always / onset / recovery / intermittent) and later work
+***   PART E: IWP-NEP gap in SMSD with health at different time points (same sample):
+***           G1 year | G2 + controls (M12 without health) | G3 G2 + health in t-1 | G4 G2 + health in t (= M11) | G5 both
+***           G6 only persons healthy in t-1 and t (no limitation, no bad health)
+***           G2b-G4b: health in t-2 (3-year windows, weight RB063)
+*** Timing: employment groups refer to the income reference year (calendar year before the survey, PL211A-L), health and SMSD
+***         to the interview. Health in t-1 is therefore measured DURING the reference year of the group in t (not strictly before);
+***         health in t-2 (G3b) and current status at interview (C4/C5) give a cleaner temporal order.
+*** Health measures: limitation in activities (GALI, PH030 = 1/2) as main binary; bad / very bad self-rated health (PH010 = 4/5);
+***         chronic condition (PH020 = 1). In the gap models all three as in M11 (missing = own category)
+*** Sample: as in L04 / L05 - 18-64, groups as cross-sectional, each release contributes its last year pair, weight RB062
+*** Standard errors clustered by household (release x household ID)
+*** Input:  SILC_Long_Prepared.dta (L02, rerun L02 first: it now creates 'chronic' from PH020)
+*** Output: L06_Health_SMSD_log.txt, L06_Health_SMSD.xlsx (sheets: results, flows_lim, flows_bad, traj)
+*******************************************************************************************************************************************************************************************
+
+capture log close
+clear all
+set more off
+set varabbrev off
+
+local path "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC"
+log using "`path'/L06_Health_SMSD_log.txt", text replace
+
+use "`path'/SILC_Long_Prepared.dta", clear
+
+capture confirm variable chronic
+if _rc != 0 {
+    di as error "chronic not in SILC_Long_Prepared.dta - rerun L02 (now creates chronic from PH020)"
+    exit 111
+}
+
+********************************************************************************
+* Health binaries (missing if not valid)
+********************************************************************************
+
+gen byte hlim = inlist(PH030, 1, 2) if inlist(PH030, 1, 2, 3)
+gen byte hbad = inlist(PH010, 4, 5) if inlist(PH010, 1, 2, 3, 4, 5)
+gen byte hchr = chronic if inlist(chronic, 0, 1)
+label variable hlim "Limited in activities (PH030 = 1/2)"
+label variable hbad "Bad / very bad health (PH010 = 4/5)"
+label variable hchr "Chronic condition (PH020 = 1)"
+
+di _n as result "--- Valid health by survey year (18-64, all releases) ---"
+table year if inrange(dag, 18, 64), statistic(count hlim hbad hchr) statistic(mean hlim hbad hchr) nformat(%9.3f mean)
+
+* Working in t (employee >= 7 months) and currently employed at interview
+gen byte work = (employed == 1) if inrange(dag, 18, 64) & !missing(months_emp)
+gen byte cur_emp = (act_status == 1) if inrange(act_status, 1, 7)
+
+* Group x health state (limitation / bad health)
+foreach m in lim bad {
+    gen byte sth_`m' = .
+    replace sth_`m' = 1 if state == 1 & h`m' == 0
+    replace sth_`m' = 2 if state == 1 & h`m' == 1
+    replace sth_`m' = 3 if state == 2 & h`m' == 0
+    replace sth_`m' = 4 if state == 2 & h`m' == 1
+    replace sth_`m' = 5 if state == 3 & work == 1
+    replace sth_`m' = 6 if state == 3 & work != 1
+    replace sth_`m' = 7 if state == 4
+    replace sth_`m' = 8 if inlist(state, 1, 2) & missing(h`m')
+}
+label define sthlim 1 "IWP, not limited" 2 "IWP, limited" 3 "NEP, not limited" 4 "NEP, limited" 5 "Not poor, working" 6 "Not poor, not working" 7 "Other poor" 8 "IWP/NEP, health missing"
+label define sthbad 1 "IWP, good-fair health" 2 "IWP, bad health" 3 "NEP, good-fair health" 4 "NEP, bad health" 5 "Not poor, working" 6 "Not poor, not working" 7 "Other poor" 8 "IWP/NEP, health missing"
+label values sth_lim sthlim
+label values sth_bad sthbad
+
+********************************************************************************
+* Previous-year (t-1) and t-2 values of the same person within the same release
+********************************************************************************
+
+sort release pid year
+foreach v in state smd_grp sth_lim sth_bad hlim hbad hchr health_bad limit chronic act_status cur_emp arop_post_rel {
+    by release pid: gen `v'_lag = `v'[_n - 1] if year[_n - 1] == year - 1
+}
+foreach v in health_bad limit chronic {
+    by release pid: gen `v'_l2 = `v'[_n - 2] if year[_n - 2] == year - 2
+    replace `v'_l2 = 9 if missing(`v'_l2) & year[_n - 2] == year - 2 & pid[_n - 2] == pid & release[_n - 2] == release
+}
+foreach v in health_bad limit chronic {
+    replace `v'_lag = 9 if missing(`v'_lag) & !missing(state_lag)
+}
+gen byte obs_l2 = !missing(health_bad_l2)
+label values sth_lim_lag sthlim
+label values sth_bad_lag sthbad
+
+* Health change t-1 -> t (limitation)
+gen byte hchg = .
+replace hchg = 0 if hlim_lag == 0 & hlim == 0
+replace hchg = 1 if hlim_lag == 0 & hlim == 1
+replace hchg = 2 if hlim_lag == 1 & hlim == 0
+replace hchg = 3 if hlim_lag == 1 & hlim == 1
+label define hchglbl 0 "Not limited t-1 and t" 1 "Becomes limited" 2 "Recovers" 3 "Limited t-1 and t"
+label values hchg hchglbl
+
+gen byte to_nep = (state == 2) if !missing(state)
+
+
+*******************************************************************************************************************************************************************************************
+*** PART D first (needs all years of a release): 4-year health trajectories by starting group
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART D: 4-year health trajectories (limitation) by starting group ==================="
+
+preserve
+keep if inrange(year, release - 3, release)
+sort release pid year
+by release pid: gen byte n_obs = _N
+by release pid: egen byte n_h = count(hlim)
+by release pid: egen byte n_lim = total(hlim == 1)
+by release pid: egen byte n_work = total(work == 1)
+by release pid: gen byte start_state = state[1] if year[1] == release - 3
+by release pid: gen byte first_h = hlim[1]
+by release pid: gen byte last_h = hlim[_N]
+by release pid: gen byte last_state = state[_N]
+* Work in any of the three later years
+by release pid: egen byte n_work_later = total(work == 1 & year > release - 3)
+keep if year == release & n_obs == 4 & n_h == 4 & inlist(start_state, 1, 2) & RB064 > 0 & !missing(RB064)
+
+gen byte traj = 5
+replace traj = 1 if n_lim == 0
+replace traj = 2 if n_lim == 4
+replace traj = 3 if n_lim > 0 & n_lim < 4 & first_h == 0 & last_h == 1
+replace traj = 4 if n_lim > 0 & n_lim < 4 & first_h == 1 & last_h == 0
+label define trajlbl 1 "Never limited" 2 "Limited all 4 years" 3 "Onset (healthy -> limited)" 4 "Recovery (limited -> healthy)" 5 "Intermittent"
+label values traj trajlbl
+label values start_state statelbl
+label values last_state statelbl
+gen byte work_later = (n_work_later > 0)
+gen byte start_sth = 2 * (start_state - 1) + 1 + first_h
+label define startsth 1 "IWP, not limited" 2 "IWP, limited" 3 "NEP, not limited" 4 "NEP, limited"
+label values start_sth startsth
+
+di _n as result "--- D1: health trajectory by starting group (column %, weight RB064; unweighted N below) ---"
+tab traj start_state [aw=RB064], col nofreq
+tab traj start_state
+di _n as result "--- D2: by starting group x health in year 1: share working in a later year, share limited all 4 years, group in year 4 ---"
+table start_sth [aw=RB064], statistic(mean work_later) statistic(frequency) nformat(%9.3f mean)
+tab start_sth last_state [aw=RB064], row nofreq
+
+* Export trajectories (weighted %, unweighted N)
+gen double w = RB064
+gen byte one = 1
+collapse (sum) w one, by(start_sth traj)
+bysort start_sth: egen double tot = total(w)
+gen double pct = 100 * w / tot
+rename one n_unw
+export excel using "`path'/L06_Health_SMSD.xlsx", sheet("traj", replace) firstrow(variables)
+restore
+
+
+*******************************************************************************************************************************************************************************************
+*** Two-year pairs: each release contributes its last year pair (as in L03 - L05)
+*******************************************************************************************************************************************************************************************
+
+keep if year == release & RB062 > 0 & !missing(RB062)
+gen byte s_pair = inrange(dag, 18, 64) & !missing(state, state_lag)
+
+capture drop hh_cl
+egen long hh_cl = group(release idhh)
+svyset hh_cl [pw=RB062], vce(linearized)
+
+local ctrl "i.age_grp i.sex i.hh_type c.inc_rel i.educ3 i.region i.urban"
+* Transitions: largely time-invariant controls only (income and household type in t can be consequences of the transition)
+local ctrl_s "i.age_grp i.sex i.educ3 i.region i.urban"
+local h_t "i.health_bad i.limit i.chronic"
+local h_l1 "i.health_bad_lag i.limit_lag i.chronic_lag"
+local h_l2 "i.health_bad_l2 i.limit_l2 i.chronic_l2"
+
+tempfile results
+postfile res str10 part str48 model double(r0 r1 est se p n) using `results', replace
+
+* Comparison of two groups (byvar 0/1) on a binary outcome: predicted shares, gap in pp and %
+capture program drop cmp
+program define cmp
+    args part model outcome byvar sub controls
+    quietly svy, subpop(`sub'): logit `outcome' i.`byvar' i.year `controls'
+    local n = e(N_sub)
+    quietly margins `byvar', subpop(`sub') vce(unconditional) post
+    local r0 = 100 * _b[0bn.`byvar']
+    local r1 = 100 * _b[1.`byvar']
+    quietly nlcom (pp: 100 * (_b[1.`byvar'] - _b[0bn.`byvar'])) (rel: 100 * (_b[1.`byvar'] / _b[0bn.`byvar'] - 1)), post
+    local p = 2 * normal(-abs(_b[pp] / _se[pp]))
+    di as text %-5s "`part'" %-40s "`model'" " 0: " %5.1f `r0' "  1: " %5.1f `r1' "  diff " %6.2f _b[pp] " pp (SE " %4.2f _se[pp] ")  " %6.1f _b[rel] " % (SE " %4.1f _se[rel] ")  p=" %6.4f `p' "  N=" `n'
+    post res ("`part'") ("`model' pp") (`r0') (`r1') (_b[pp]) (_se[pp]) (`p') (`n')
+    post res ("`part'") ("`model' %") (`r0') (`r1') (_b[rel]) (_se[rel]) (`p') (`n')
+end
+
+
+*******************************************************************************************************************************************************************************************
+*** PART A: Health by group
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART A: health by group (t, 18-64, weighted shares) ==================="
+
+table smd_grp if inlist(smd_grp, 0, 1) & inrange(dag, 18, 64) [aw=RB062], statistic(mean hlim hbad hchr) statistic(frequency) nformat(%9.3f mean)
+di _n as result "--- NEP by current economic status ---"
+table act_status if smd_grp == 0 & inrange(dag, 18, 64) [aw=RB062], statistic(mean hlim hbad hchr) statistic(frequency) nformat(%9.3f mean)
+
+
+*******************************************************************************************************************************************************************************************
+*** PART B: Flows group x health t-1 -> t
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART B: flows between group x health states t-1 -> t ==================="
+
+foreach m in lim bad {
+    di _n as result "--- B1 (`m'): outflows - row % (where do they go?) ---"
+    tab sth_`m'_lag sth_`m' if s_pair == 1 & inrange(sth_`m'_lag, 1, 4) [aw=RB062], row nofreq
+    di _n as result "--- B2 (`m'): inflows - column % (where do they come from?) ---"
+    tab sth_`m'_lag sth_`m' if s_pair == 1 & inrange(sth_`m', 1, 4) [aw=RB062], col nofreq
+    di _n as result "--- unweighted N ---"
+    tab sth_`m'_lag sth_`m' if s_pair == 1 & (inrange(sth_`m'_lag, 1, 4) | inrange(sth_`m', 1, 4))
+
+    * Export weighted flows: share of origin (row %) and share of destination (column %)
+    preserve
+    keep if s_pair == 1 & (inrange(sth_`m'_lag, 1, 4) | inrange(sth_`m', 1, 4)) & !missing(sth_`m'_lag, sth_`m')
+    gen double w = RB062
+    gen byte one = 1
+    collapse (sum) w one, by(sth_`m'_lag sth_`m')
+    rename sth_`m'_lag from
+    rename sth_`m' to
+    bysort from: egen double tot_from = total(w)
+    bysort to: egen double tot_to = total(w)
+    gen double row_pct = 100 * w / tot_from
+    gen double col_pct = 100 * w / tot_to
+    rename one n_unw
+    decode from, gen(from_lbl)
+    decode to, gen(to_lbl)
+    order from from_lbl to to_lbl w row_pct col_pct n_unw
+    export excel using "`path'/L06_Health_SMSD.xlsx", sheet("flows_`m'", replace) firstrow(variables)
+    restore
+}
+
+
+*******************************************************************************************************************************************************************************************
+*** PART C: Selection, return, consequence
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART C: selection, return, consequence ==================="
+di as text "0 / 1 = not limited / limited in t-1 (C1, C3, C4, C5); 0 / 1 = NEP / IWP in t-1 (C6)"
+
+*** C1 selection: IWP in t-1 -> NEP in t, by limitation / bad health in t-1
+cmp "C1" "IWP->NEP by limited(t-1)" to_nep hlim_lag "if s_pair == 1 & state_lag == 1 & !missing(hlim_lag)" "`ctrl_s'"
+cmp "C1" "IWP->NEP by bad health(t-1)" to_nep hbad_lag "if s_pair == 1 & state_lag == 1 & !missing(hbad_lag)" "`ctrl_s'"
+cmp "C1" "IWP->NEP by chronic(t-1)" to_nep hchr_lag "if s_pair == 1 & state_lag == 1 & !missing(hchr_lag)" "`ctrl_s'"
+
+*** C2 IWP in t-1: exit to NEP by health change (descriptive)
+di _n as result "--- C2: IWP in t-1 - share NEP / not poor in t by health change t-1 -> t (weighted, unweighted N) ---"
+table hchg if s_pair == 1 & state_lag == 1 [aw=RB062], statistic(mean to_nep) statistic(frequency) nformat(%9.3f mean)
+tab hchg state if s_pair == 1 & state_lag == 1 [aw=RB062], row nofreq
+
+*** C3 return: NEP in t-1 -> working (employee >= 7 months) in t, by health in t-1
+cmp "C3" "NEP->work by limited(t-1)" work hlim_lag "if s_pair == 1 & state_lag == 2 & !missing(hlim_lag)" "`ctrl_s'"
+cmp "C3" "NEP->work by bad health(t-1)" work hbad_lag "if s_pair == 1 & state_lag == 2 & !missing(hbad_lag)" "`ctrl_s'"
+di _n as result "--- C3: NEP in t-1 - share working in t by current status and limitation in t-1 ---"
+table act_status_lag hlim_lag if s_pair == 1 & state_lag == 2 [aw=RB062], statistic(mean work) nformat(%9.3f mean)
+
+*** C4 / C5 with current economic status at interview (same time point as health): poor in t-1
+gen byte cur_out = 1 - cur_emp
+cmp "C4" "poor emp(t-1)->not emp(t) by lim(t-1)" cur_out hlim_lag "if s_pair == 1 & arop_post_rel_lag == 1 & cur_emp_lag == 1 & !missing(hlim_lag)" "`ctrl_s'"
+cmp "C5" "poor not emp(t-1)->emp(t) by lim(t-1)" cur_emp hlim_lag "if s_pair == 1 & arop_post_rel_lag == 1 & cur_emp_lag == 0 & !missing(hlim_lag)" "`ctrl_s'"
+
+*** C6 consequence: not limited / good health in t-1 -> limited / bad health in t, IWP vs NEP in t-1
+cmp "C6" "becomes limited: IWP vs NEP(t-1)" hlim smd_grp_lag "if s_pair == 1 & inlist(smd_grp_lag, 0, 1) & hlim_lag == 0" "`ctrl_s'"
+cmp "C6" "becomes bad health: IWP vs NEP(t-1)" hbad smd_grp_lag "if s_pair == 1 & inlist(smd_grp_lag, 0, 1) & hbad_lag == 0" "`ctrl_s'"
+* Recovery: limited in t-1 -> not limited in t
+gen byte hrec = 1 - hlim
+cmp "C6" "recovers: IWP vs NEP(t-1)" hrec smd_grp_lag "if s_pair == 1 & inlist(smd_grp_lag, 0, 1) & hlim_lag == 1" "`ctrl_s'"
+
+di _n as text "Reading: C1/C4 clearly > 0 -> limited poor workers leave work more often (selection). C3/C5 clearly < 0 -> limited NEP"
+di as text "rarely return (persistent selection). C6: 'becomes limited' clearly lower for IWP (negative gap) -> health worsens more"
+di as text "among NEP (consequence). Both can hold at the same time."
+
+
+*******************************************************************************************************************************************************************************************
+*** PART E: IWP-NEP gap in SMSD with health at different time points (same sample)
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART E: IWP-NEP gap in SMSD and health over time ==================="
+
+gen byte s_g = inlist(smd_grp, 0, 1) & !missing(smd, inc_rel, state_lag)
+
+capture program drop gap
+program define gap
+    args model sub controls
+    cmp "E" "`model'" smd smd_grp "`sub'" "`controls'"
+end
+
+gap "G1 year" s_g ""
+gap "G2 + controls" s_g "`ctrl'"
+gap "G3 + health t-1" s_g "`ctrl' `h_l1'"
+gap "G4 + health t (M11)" s_g "`ctrl' `h_t'"
+gap "G5 + health t-1 and t" s_g "`ctrl' `h_l1' `h_t'"
+di as text "G2 controls (M12 without health) | G3 + health in t-1 | G4 + health in t | G5 both (same sample)"
+
+* G6: only persons not limited and in good-fair health in t-1 and t
+gen byte s_g6 = s_g == 1 & hlim == 0 & hlim_lag == 0 & hbad == 0 & hbad_lag == 0
+gap "G6 healthy t-1 and t: controls" s_g6 "`ctrl'"
+
+* G2b-G4b: health in t-2 (3-year windows, weight RB063)
+gen byte s_g2 = s_g == 1 & obs_l2 == 1 & RB063 > 0 & !missing(RB063)
+svyset hh_cl [pw=RB063], vce(linearized)
+gap "G2b + controls (3-yr sample)" s_g2 "`ctrl'"
+gap "G3b + health t-2" s_g2 "`ctrl' `h_l2'"
+gap "G4b + health t" s_g2 "`ctrl' `h_t'"
+svyset hh_cl [pw=RB062], vce(linearized)
+
+di _n as text "Reading: G3 (or G3b) close to G4 -> the health part of the gap already existed before (selection; M11 well founded)."
+di as text "G3/G3b close to G2 -> the health part arises together with the status (consequence; M12 closer)."
+di as text "G6 clearly < 0 -> the gap exists also among persons who are healthy in both years."
+
+
+*******************************************************************************************************************************************************************************************
+*** Export
+*******************************************************************************************************************************************************************************************
+
+postclose res
+use `results', clear
+format r0 r1 est se %9.3f
+format p %6.4f
+di _n as result "=== Summary ==="
+list, noobs abbreviate(10) separator(0)
+export excel using "`path'/L06_Health_SMSD.xlsx", sheet("results", replace) firstrow(variables)
+
+di as result "=== FERTIG ==="
+
+log close

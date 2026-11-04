@@ -19,7 +19,7 @@
 ***   - AROP w/o IWP as in all cross-sectional analyses: not working >= 7 months in any status, 18-64,
 ***     without old-age benefit recipients (PY100G > 0); identical in transitions, FE models and persistence
 ***   - Controls as in the cross-sectional deprivation models (M1-M12): age group, sex, household type (9),
-***     income position, education (ISCED 3 groups), region (NUTS 1), urbanisation, health (PH010), limitation (PH030);
+***     income position, education (ISCED 3 groups), region (NUTS 1), urbanisation, health (PH010), chronic (PH020), limitation (PH030);
 ***     missing values as own category (9). Current economic status harmonised from PL031/PL032 (act_status)
 ***   - Limitation: the cross-sectional scripts use RX060 as provided (SMD until 2020, SMSD from 2021);
 ***     the longitudinal UDB has no RX060, so SMSD (13 items) is rebuilt for all years
@@ -52,7 +52,7 @@ use "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/
 * Destring (decimal comma -> point); create empty variable if not available
 ********************************************************************************
 
-local numvars "RB060 RB062 RB063 RB064 RB080 RB090 RB110 RX010 HY020 HY022 HX050 PY100G PL211A PL211B PL211C PL211D PL211E PL211F PL211G PL211H PL211I PL211J PL211K PL211L HS011 HS021 HS031 HS040 HS050 HS060 HH050 HS110 HD080 PD020 PD030 PD050 PD060 PD070 PD080 DB100 PE040 PE041 PH010 PH030 PL031 PL032"
+local numvars "RB060 RB062 RB063 RB064 RB080 RB090 RB110 RX010 HY020 HY022 HX050 PY100G PL211A PL211B PL211C PL211D PL211E PL211F PL211G PL211H PL211I PL211J PL211K PL211L HS011 HS021 HS031 HS040 HS050 HS060 HH050 HS110 HD080 PD020 PD030 PD050 PD060 PD070 PD080 DB100 PE040 PE041 PH010 PH020 PH030 PL031 PL032"
 
 foreach var of local numvars {
     capture confirm variable `var'
@@ -78,7 +78,7 @@ foreach var of local numvars {
 * Survey answers for a person-year do not differ between releases -> take the value from any release
 ********************************************************************************
 
-foreach v in HS011 HS021 HS031 HS040 HS050 HS060 HH050 HS110 HD080 PD020 PD030 PD050 PD060 PD070 PD080 PE040 PE041 PL031 PL032 PH010 PH030 DB100 {
+foreach v in HS011 HS021 HS031 HS040 HS050 HS060 HH050 HS110 HD080 PD020 PD030 PD050 PD060 PD070 PD080 PE040 PE041 PL031 PL032 PH010 PH020 PH030 DB100 {
     capture drop fill_tmp
     bysort idperson year: egen fill_tmp = max(`v')
     quietly count if missing(`v') & !missing(fill_tmp)
@@ -199,6 +199,11 @@ gen byte limit = PH030 if inlist(PH030, 1, 2, 3)
 replace limit = 9 if missing(limit)
 label define limitlbl 1 "Severely limited" 2 "Limited" 3 "Not limited" 9 "Missing"
 label values limit limitlbl
+* Chronic illness or condition (PH020: 1 = yes, 2 = no)
+gen byte chronic = (PH020 == 1) if inlist(PH020, 1, 2)
+replace chronic = 9 if missing(chronic)
+label define chroniclbl 0 "No chronic condition" 1 "Chronic condition" 9 "Missing"
+label values chronic chroniclbl
 
 * Current economic status, harmonised (as in the cross-sectional "Prepair EU-Silc Files")
 gen ecs_old = PL031
@@ -232,6 +237,7 @@ by idperson: replace educ3 = educ3[_n - 1] if educ3 == 9 & educ3[_n - 1] != 9 & 
 sort idperson year release
 tab year educ3 if inrange(dag, 18, 64), missing
 tab year health_bad if inrange(dag, 18, 64), missing
+tab year chronic if inrange(dag, 18, 64), missing
 tab year act_status if inrange(dag, 18, 64) & any_worker == 0 & oldage_ben == 0, missing
 
 ********************************************************************************

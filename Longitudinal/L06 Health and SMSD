@@ -18,6 +18,7 @@
 ***           G1 year | G2 + controls (M12 without health) | G3 G2 + health in t-1 | G4 G2 + health in t (= M11) | G5 both
 ***           G6 only persons healthy in t-1 and t (no limitation, no bad health)
 ***           G2b-G4b: health in t-2 (3-year windows, weight RB063)
+***   PART F: cluster-bootstrap tests of the CHANGE of the gap between models (G2->G3/G4, G2b->G3b/G4b, G3b->+health t, G6 vs all)
 *** Timing: employment groups refer to the income reference year (calendar year before the survey, PL211A-L), health and SMSD
 ***         to the interview. Health in t-1 is therefore measured DURING the reference year of the group in t (not strictly before);
 ***         health in t-2 (G3b) and current status at interview (C4/C5) give a cleaner temporal order.
@@ -340,6 +341,83 @@ svyset hh_cl [pw=RB062], vce(linearized)
 di _n as text "Reading: G3 (or G3b) close to G4 -> the health part of the gap already existed before (selection; M11 well founded)."
 di as text "G3/G3b close to G2 -> the health part arises together with the status (consequence; M12 closer)."
 di as text "G6 clearly < 0 -> the gap exists also among persons who are healthy in both years."
+
+
+*******************************************************************************************************************************************************************************************
+*** PART F: Are the CHANGES of the gap between models significant? (cluster bootstrap)
+*** Part E tests each gap against 0. The key claims are about differences between models (does health reduce the gap?
+*** does earlier health explain as much as current health? is the relative gap among the healthy different?).
+*** Gaps from nested models on the same persons are correlated -> difference tested with a household-cluster bootstrap
+*** of the whole procedure (both models re-estimated in each replication). Weighted logit with the same weights as in E;
+*** point estimates are identical to the svy models.
+***   d_pp  = gap B - gap A (pp)        share = 100 * (1 - gap B / gap A) = share of gap A explained by the added variables
+***   d_rel = relative gap B - relative gap A (%-points)
+*******************************************************************************************************************************************************************************************
+
+di _n(2) as result "=================== PART F: tests of changes in the gap between models (cluster bootstrap) ==================="
+
+local reps 500
+
+capture program drop bsgap
+program define bsgap, rclass
+    syntax, suba(string) subb(string) w(string) [ctrla(string) ctrlb(string)]
+    quietly logit smd i.smd_grp i.year `ctrla' [pw=`w'] if `suba'
+    quietly margins smd_grp if `suba', nose
+    tempname m
+    matrix `m' = r(b)
+    local a0 = `m'[1, 1]
+    local a1 = `m'[1, 2]
+    quietly logit smd i.smd_grp i.year `ctrlb' [pw=`w'] if `subb'
+    quietly margins smd_grp if `subb', nose
+    matrix `m' = r(b)
+    local b0 = `m'[1, 1]
+    local b1 = `m'[1, 2]
+    return scalar gap_a = 100 * (`a1' - `a0')
+    return scalar gap_b = 100 * (`b1' - `b0')
+    return scalar d_pp = 100 * ((`b1' - `b0') - (`a1' - `a0'))
+    return scalar share = 100 * (1 - (`b1' - `b0') / (`a1' - `a0'))
+    return scalar d_rel = 100 * ((`b1' / `b0' - 1) - (`a1' / `a0' - 1))
+end
+
+capture program drop runbs
+program define runbs
+    args label suba subb w ctrla ctrlb reps
+    preserve
+    quietly keep if (`suba') | (`subb')
+    quietly bootstrap gap_a = r(gap_a) gap_b = r(gap_b) d_pp = r(d_pp) share = r(share) d_rel = r(d_rel), reps(`reps') seed(20261104) cluster(hh_cl) nodots: bsgap, suba(`suba') subb(`subb') w(`w') ctrla(`ctrla') ctrlb(`ctrlb')
+    tempname ci
+    matrix `ci' = e(ci_percentile)
+    di _n as result "`label'"
+    foreach s in gap_a gap_b d_pp share d_rel {
+        local b = _b[`s']
+        local se = _se[`s']
+        local p = 2 * normal(-abs(`b' / `se'))
+        local c = colnumb(`ci', "`s'")
+        local lo = `ci'[1, `c']
+        local hi = `ci'[2, `c']
+        di as text "   " %-6s "`s'" "  " %8.2f `b' "  (SE " %5.2f `se' ")  95% CI [" %7.2f `lo' "; " %7.2f `hi' "]  p=" %6.4f `p'
+        post res ("F") ("`label': `s'") (`lo') (`hi') (`b') (`se') (`p') (e(N))
+    }
+    restore
+end
+
+*** F1 two-year pairs (RB062): what does health at which time point explain?
+runbs "F1a G2 -> G3 (+health t-1)" "s_g == 1" "s_g == 1" RB062 "`ctrl'" "`ctrl' `h_l1'" `reps'
+runbs "F1b G2 -> G4 (+health t)" "s_g == 1" "s_g == 1" RB062 "`ctrl'" "`ctrl' `h_t'" `reps'
+runbs "F1c G3 -> G5 (health t on top of t-1)" "s_g == 1" "s_g == 1" RB062 "`ctrl' `h_l1'" "`ctrl' `h_l1' `h_t'" `reps'
+
+*** F2 three-year windows (RB063): health clearly before the reference period
+runbs "F2a G2b -> G3b (+health t-2)" "s_g2 == 1" "s_g2 == 1" RB063 "`ctrl'" "`ctrl' `h_l2'" `reps'
+runbs "F2b G2b -> G4b (+health t)" "s_g2 == 1" "s_g2 == 1" RB063 "`ctrl'" "`ctrl' `h_t'" `reps'
+runbs "F2c G3b -> G3b + health t" "s_g2 == 1" "s_g2 == 1" RB063 "`ctrl' `h_l2'" "`ctrl' `h_l2' `h_t'" `reps'
+
+*** F3 relative gap among the healthy (G6) vs. all (G2): different samples, same controls -> look at d_rel
+runbs "F3 G2 (all) vs G6 (healthy t-1 and t)" "s_g == 1" "s_g6 == 1" RB062 "`ctrl'" "`ctrl'" `reps'
+
+di _n as text "Columns for F in the Excel sheet: r0 / r1 = lower / upper bound of the 95% percentile CI, est = bootstrap estimate."
+di as text "Reading: F1b/F2b d_pp clearly > 0 (CI above 0) -> health reduces the gap significantly; share = part of the gap explained."
+di as text "F2c d_pp close to 0 -> current health adds nothing beyond health two years earlier (selection, not consequence)."
+di as text "F3 d_rel close to 0 -> the relative gap among the healthy is as large as among all."
 
 
 *******************************************************************************************************************************************************************************************

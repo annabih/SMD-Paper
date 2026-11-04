@@ -39,11 +39,27 @@ log using "`path'/L06_Health_SMSD_log.txt", text replace
 
 use "`path'/SILC_Long_Prepared.dta", clear
 
+* Chronic condition: created in L02 (PH020). If L02 has not been rerun, build it here from PH020
 capture confirm variable chronic
 if _rc != 0 {
-    di as error "chronic not in SILC_Long_Prepared.dta - rerun L02 (now creates chronic from PH020)"
-    exit 111
+    capture confirm variable PH020
+    if _rc != 0 {
+        di as error "Neither chronic nor PH020 in SILC_Long_Prepared.dta - check that L01/L02 keep PH020"
+        exit 111
+    }
+    di as text "chronic not found - built from PH020 (filled across releases as in L02)"
+    capture confirm string variable PH020
+    if _rc == 0 {
+        replace PH020 = subinstr(PH020, ",", ".", .)
+        destring PH020, replace force
+    }
+    bysort idperson year: egen double PH020_f = max(PH020)
+    replace PH020 = PH020_f if missing(PH020)
+    drop PH020_f
+    gen byte chronic = (PH020 == 1) if inlist(PH020, 1, 2)
+    replace chronic = 9 if missing(chronic)
 }
+tab year chronic if inrange(dag, 18, 64), missing
 
 ********************************************************************************
 * Health binaries (missing if not valid)

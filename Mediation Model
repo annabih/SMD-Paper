@@ -14,12 +14,12 @@
 ***   b_j = coefficient of mediator j in the logit of Y on W + X + all M (full model); c' = coefficient of W there (direct effect)
 ***   c   = coefficient of W in the logit of Y on W + X + residualised M (total effect, same scale) = c' + sum_j a_j * b_j (exact)
 ***   Reported: logit scale, share of the total gap (%), probability scale in pp (KHB-APE; block pp apportioned by the logit
-***   shares) and in % of the predicted NEP rate; household-cluster bootstrap with percentile CIs
+***   shares) and in % of the predicted NEP rate; standard errors from the official khb command (Part G, delta method)
 *** Parts: A setup | B mediators by group | C paths a and b | D ladder (gap after adding blocks) | E KHB main (M1, M2, M4)
-***        | F KHB robustness (+ M3) | G cross-check with the official khb command | H export
+***        | F KHB robustness (+ M3) | G standard errors with the official khb command | H export
 *** Health is a confounder (Figure 1). Set global HEALTH_ROLE to "M" to treat health as mediator block M5 instead.
 *** Input: SILC_All_Years_Adjusted.dta | Output: Mediation_log.txt, sheets Med_paths, Med_ladder, Med_KHB in 05_Deprivation_Results.xlsx
-*** Requires: khb (ssc install khb) only for Part G
+*** Requires: khb (installed automatically from SSC if missing)
 *******************************************************************************************************************************************************************************************
 
 capture log close
@@ -35,7 +35,8 @@ svyset hh_cl [pw=dwt], vce(linearized)
 
 * Settings
 global HEALTH_ROLE "X"
-local reps = 500
+capture which khb
+if _rc != 0 ssc install khb
 
 *******************************************************************************************************************************************************************************************
 *** PART A: Setup - raw variables, mediators, sample
@@ -126,8 +127,8 @@ program define med_expand, rclass
             capture drop `prefix'`v'_*
             quietly tab `v' if s_med == 1, gen(`prefix'`v'_)
             drop `prefix'`v'_1
-            unab d : `prefix'`v'_*
-            local out "`out' `d'"
+            capture unab d : `prefix'`v'_*
+            if _rc == 0 local out "`out' `d'"
         }
         else {
             local v = subinstr("`t'", "c.", "", 1)
@@ -147,11 +148,27 @@ forvalues k = 1/5 {
 }
 global ALLM "$MD1 $MD2 $MD3 $MD4 $MD5"
 
+* Observations perfectly predicted in the largest model (sparse categories, e.g. missing education / health with no
+* SMSD case) are dropped by logit model by model. Drop them once, so that all models use the
+* same sample and logit does not run into separation problems
+capture drop s_med0
+gen byte s_med0 = s_med
+quietly logit smd i.smd_grp $XFV $MD1 $MD2 $MD3 $MD4 $MD5 [pw=dwt] if s_med == 1
+replace s_med = 0 if s_med == 1 & !e(sample)
+di _n as result "--- Observations dropped because perfectly predicted ---"
+count if s_med0 == 1 & s_med == 0
+capture noisily tab1 educ3 region urban health_bad limit x_PH020 hh_type if s_med0 == 1 & s_med == 0
+di _n as result "--- Sparse cells: observations and SMSD cases per category (final sample) ---"
+foreach v in hh_type educ3 region urban health_bad limit x_PH020 tenure rent_inc x_OTHW {
+    tab `v' smd if s_med == 1
+}
+tab smd_grp if s_med == 1
+
 * Result files
 tempfile f_paths f_lad f_dec
 postfile med_paths str6 block str40 mediator str80 label double(a a_se b b_se ab) using `f_paths', replace
 postfile med_lad str8 model str45 label double(s_nep s_iwp pp pp_se rel rel_se n) using `f_lad', replace
-postfile med_dec str6 run str12 component double(logit share share_lo share_hi pp pp_se pp_lo pp_hi rel) using `f_dec', replace
+postfile med_dec str6 run str12 component double(logit share pp rel) using `f_dec', replace
 
 *******************************************************************************************************************************************************************************************
 *** PART B: Mediators by group (weighted means / shares)
@@ -287,64 +304,45 @@ program define med_khb, rclass
     return scalar check = `bind' - `csum'
 end
 
-* Post one component from the bootstrap results
-capture program drop med_post
-program define med_post
-    args run comp ln sn an rn
-    tempname CI
-    matrix `CI' = e(ci_percentile)
-    local s = 100
-    local s_lo = .
-    local s_hi = .
-    if "`sn'" != "" {
-        local s = _b[`sn']
-        local s_lo = `CI'[1, colnumb(`CI', "`sn'")]
-        local s_hi = `CI'[2, colnumb(`CI', "`sn'")]
-    }
-    local a_lo = `CI'[1, colnumb(`CI', "`an'")]
-    local a_hi = `CI'[2, colnumb(`CI', "`an'")]
-    post med_dec ("`run'") ("`comp'") (_b[`ln']) (`s') (`s_lo') (`s_hi') (_b[`an']) (_se[`an']) (`a_lo') (`a_hi') (_b[`rn'])
-    di as text %-12s "`comp'" " logit " %7.3f _b[`ln'] "  share " %6.1f `s' " % [" %6.1f `s_lo' "; " %6.1f `s_hi' "]  " %6.2f _b[`an'] " pp [" %6.2f `a_lo' "; " %6.2f `a_hi' "]  " %6.1f _b[`rn'] " % of NEP"
-end
-
-* Point estimates, bootstrap and posting for one set of blocks
-capture program drop med_run
-program define med_run
-    args run blocks reps
+* Table of one decomposition (point estimates; identical to the official khb command in Part G, which gives the SEs)
+capture program drop med_table
+program define med_table
+    args run blocks
     global BLOCKS "`blocks'"
-    quietly med_khb
-    di _n as result "=== KHB `run': blocks `blocks' ===" _n as text "check (c - c' - sum a*b): " %12.10f r(check)
-    local bexp "btot=r(btot) bdir=r(bdir) bind=r(bind) sdir=r(sdir) sind=r(sind) atot=r(atot) adir=r(adir) aind=r(aind) rtot=r(rtot) rdir=r(rdir) rind=r(rind)"
+    med_khb
+    di _n as result "=== KHB `run': blocks `blocks' ===" _n as text "check (c - c' - sum a*b, should be ~0): " %12.10f r(check)
     foreach k of local blocks {
-        local bexp "`bexp' c`k'=r(c`k') s`k'=r(s`k') pp`k'=r(pp`k') rel`k'=r(rel`k')"
+        post med_dec ("`run'") ("via M`k'") (r(c`k')) (r(s`k')) (r(pp`k')) (r(rel`k'))
+        di as text %-12s "via M`k'" " logit " %7.3f r(c`k') "  share of gap " %6.1f r(s`k') " %  " %6.2f r(pp`k') " pp  " %6.1f r(rel`k') " % of NEP"
     }
-    preserve
-    quietly keep if s_med == 1
-    bootstrap `bexp', reps(`reps') seed(20261123) cluster(hh_cl) nodots: med_khb
-    estat bootstrap, percentile
-    foreach k of local blocks {
-        med_post "`run'" "via M`k'" c`k' s`k' pp`k' rel`k'
-    }
-    med_post "`run'" "indirect" bind sind aind rind
-    med_post "`run'" "direct c'" bdir sdir adir rdir
-    med_post "`run'" "total c" btot "" atot rtot
-    restore
+    post med_dec ("`run'") ("indirect") (r(bind)) (r(sind)) (r(aind)) (r(rind))
+    post med_dec ("`run'") ("direct c'") (r(bdir)) (r(sdir)) (r(adir)) (r(rdir))
+    post med_dec ("`run'") ("total c") (r(btot)) (100) (r(atot)) (r(rtot))
+    di as text %-12s "indirect" " logit " %7.3f r(bind) "  share of gap " %6.1f r(sind) " %  " %6.2f r(aind) " pp  " %6.1f r(rind) " % of NEP"
+    di as text %-12s "direct c'" " logit " %7.3f r(bdir) "  share of gap " %6.1f r(sdir) " %  " %6.2f r(adir) " pp  " %6.1f r(rdir) " % of NEP"
+    di as text %-12s "total c" " logit " %7.3f r(btot) "  share of gap " %6.1f 100 " %  " %6.2f r(atot) " pp  " %6.1f r(rtot) " % of NEP"
 end
 
-med_run "main" "$BLOCKS_MAIN" `reps'
-med_run "rob_M3" "$BLOCKS_ROB" `reps'
+med_table "main" "$BLOCKS_MAIN"
+med_table "rob_M3" "$BLOCKS_ROB"
 
 *******************************************************************************************************************************************************************************************
-*** PART G: Cross-check with the official khb command (c, c' and disentangled a*b should equal Part E)
+*** PART G: Standard errors with the official khb command (delta method): total c (Reduced), direct c' (Full), indirect (Diff),
+***         contribution of each mediator (disentangle), share mediated (summary); probability scale with option ape
 *******************************************************************************************************************************************************************************************
 
 med_expand $XFV, prefix(_x_)
 global XD "`r(list)'"
-global MAINM ""
-foreach k of global BLOCKS_MAIN {
-    global MAINM "$MAINM ${MD`k'}"
+foreach run in MAIN ROB {
+    global MM ""
+    foreach k of global BLOCKS_`run' {
+        global MM "$MM ${MD`k'}"
+    }
+    di _n as result "=== khb `run' (blocks ${BLOCKS_`run'}): logit scale, contribution of each mediator ==="
+    capture noisily khb logit smd smd_grp || $MM if s_med == 1 [pw=dwt], concomitant($XD) vce(cluster hh_cl) summary disentangle
+    di _n as result "=== khb `run' (blocks ${BLOCKS_`run'}): probability scale (APE) ==="
+    capture noisily khb logit smd smd_grp || $MM if s_med == 1 [pw=dwt], concomitant($XD) vce(cluster hh_cl) ape
 }
-capture noisily khb logit smd smd_grp || $MAINM if s_med == 1 [pw=dwt], concomitant($XD) vce(cluster hh_cl) summary disentangle
 
 *******************************************************************************************************************************************************************************************
 *** PART H: Export
@@ -367,8 +365,8 @@ export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. 
 
 use `f_dec', clear
 format logit %7.3f
-format share share_lo share_hi rel %6.1f
-format pp pp_se pp_lo pp_hi %6.2f
+format share rel %6.1f
+format pp %6.2f
 list, noobs abbreviate(10) separator(0)
 export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("Med_KHB", replace) firstrow(variables)
 

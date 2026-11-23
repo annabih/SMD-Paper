@@ -217,7 +217,7 @@ tab smd_grp if s_med == 1
 
 * Result files
 tempfile f_paths f_lad f_dec
-postfile med_paths str6 block str40 mediator str80 label double(a a_se b b_se ab) using `f_paths', replace
+postfile med_paths str4 run str6 block str40 mediator str80 label double(a a_se b b_se ab) using `f_paths', replace
 postfile med_lad str8 model str45 label double(s_nep s_iwp pp pp_se rel rel_se n) using `f_lad', replace
 postfile med_dec str6 run str12 component double(logit share pp rel) using `f_dec', replace
 tempfile f_items
@@ -233,23 +233,31 @@ svy, subpop(s_med): tabulate tenure smd_grp, column percent
 svy, subpop(s_med): tabulate x_OTHW smd_grp, column percent
 
 *******************************************************************************************************************************************************************************************
-*** PART C: Paths a (W -> M, OLS, adjusted for X) and b (M -> Y, full logit with all mediators); a * b = contribution (logit)
+*** PART C: Paths a (W -> M, OLS, adjusted for X) and b (M -> Y, full logit with the mediators of the respective model); a * b = contribution (logit)
 *******************************************************************************************************************************************************************************************
 
-quietly svy, subpop(s_med): logit smd i.smd_grp $XFV $ALLM
-estimates store med_full
-di _n as result "--- Paths a and b ---"
-forvalues k = 1/5 {
-    foreach z of global MD`k' {
-        quietly estimates restore med_full
-        local b = _b[`z']
-        local b_se = _se[`z']
-        quietly svy, subpop(s_med): regress `z' i.smd_grp $XFV
-        local a = _b[1.smd_grp]
-        local a_se = _se[1.smd_grp]
-        local lab : variable label `z'
-        post med_paths ("M`k'") ("`z'") ("`lab'") (`a') (`a_se') (`b') (`b_se') (`a' * `b')
-        di as text "M`k' " %-24s "`z'" " a = " %8.4f `a' " (" %6.4f `a_se' ")  b = " %8.4f `b' " (" %6.4f `b_se' ")  a*b = " %8.4f `a' * `b'
+* Paths for the main model (M1, M2, M4) and the robustness model (+ M3) separately: b depends on which mediators are
+* in the full model, so each set of b-paths matches its own decomposition in Part E / F (a * b = khb "Components")
+foreach run in MAIN ROB {
+    local mm ""
+    foreach k of global BLOCKS_`run' {
+        local mm "`mm' ${MD`k'}"
+    }
+    quietly svy, subpop(s_med): logit smd i.smd_grp $XFV `mm'
+    estimates store med_full_`run'
+    di _n as result "--- Paths a and b, `run' model (blocks ${BLOCKS_`run'}) ---"
+    foreach k of global BLOCKS_`run' {
+        foreach z of global MD`k' {
+            quietly estimates restore med_full_`run'
+            local b = _b[`z']
+            local b_se = _se[`z']
+            quietly svy, subpop(s_med): regress `z' i.smd_grp $XFV
+            local a = _b[1.smd_grp]
+            local a_se = _se[1.smd_grp]
+            local lab : variable label `z'
+            post med_paths ("`run'") ("M`k'") ("`z'") ("`lab'") (`a') (`a_se') (`b') (`b_se') (`a' * `b')
+            di as text "M`k' " %-24s "`z'" " a = " %8.4f `a' " (" %6.4f `a_se' ")  b = " %8.4f `b' " (" %6.4f `b_se' ")  a*b = " %8.4f `a' * `b'
+        }
     }
 }
 

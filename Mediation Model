@@ -19,6 +19,7 @@
 ***        | F KHB robustness (+ M3) | G cross-check with the official khb command | H export
 *** Health is a confounder (Figure 1). Set global HEALTH_ROLE to "M" to treat health as mediator block M5 instead.
 *** Input: SILC_All_Years_Adjusted.dta | Output: Mediation_log.txt, sheets Med_paths, Med_ladder, Med_KHB in 05_Deprivation_Results.xlsx
+*** Bootstrap: replications in which a logit does not converge within 50 iterations are counted as failed (number reported)
 *** Requires: khb (ssc install khb) only for Part G
 *******************************************************************************************************************************************************************************************
 
@@ -147,6 +148,22 @@ forvalues k = 1/5 {
 }
 global ALLM "$MD1 $MD2 $MD3 $MD4 $MD5"
 
+* Observations perfectly predicted in the largest model (sparse categories, e.g. missing education / health with no
+* SMSD case) are dropped by logit model by model. Drop them once, so that all models and bootstrap replications use the
+* same sample and logit does not run into separation problems
+capture drop s_med0
+gen byte s_med0 = s_med
+quietly logit smd i.smd_grp $XFV $MD1 $MD2 $MD3 $MD4 $MD5 [pw=dwt] if s_med == 1
+replace s_med = 0 if s_med == 1 & !e(sample)
+di _n as result "--- Observations dropped because perfectly predicted ---"
+count if s_med0 == 1 & s_med == 0
+capture noisily tab1 educ3 region urban health_bad limit x_PH020 hh_type if s_med0 == 1 & s_med == 0
+di _n as result "--- Sparse cells: observations and SMSD cases per category (final sample) ---"
+foreach v in hh_type educ3 region urban health_bad limit x_PH020 tenure rent_inc x_OTHW {
+    tab `v' smd if s_med == 1
+}
+tab smd_grp if s_med == 1
+
 * Result files
 tempfile f_paths f_lad f_dec
 postfile med_paths str6 block str40 mediator str80 label double(a a_se b b_se ab) using `f_paths', replace
@@ -226,7 +243,8 @@ program define med_khb, rclass
         local allm "`allm' ${MD`k'}"
     }
     * full model: direct effect c' and b-paths
-    quietly logit smd i.smd_grp $XFV `allm' [pw=dwt] if s_med == 1
+    capture quietly logit smd i.smd_grp $XFV `allm' [pw=dwt] if s_med == 1, iterate(50)
+    if _rc != 0 | e(converged) == 0 exit 430
     local bdir = _b[1.smd_grp]
     local j = 0
     foreach z of local allm {
@@ -254,7 +272,8 @@ program define med_khb, rclass
         }
     }
     * reduced model with residualised mediators: total effect c on the same scale
-    quietly logit smd i.smd_grp $XFV `rlist' [pw=dwt] if s_med == 1
+    capture quietly logit smd i.smd_grp $XFV `rlist' [pw=dwt] if s_med == 1, iterate(50)
+    if _rc != 0 | e(converged) == 0 exit 430
     local btot = _b[1.smd_grp]
     quietly margins, dydx(smd_grp)
     matrix `bm' = r(b)
@@ -322,6 +341,7 @@ program define med_run
     quietly keep if s_med == 1
     bootstrap `bexp', reps(`reps') seed(20261123) cluster(hh_cl) nodots: med_khb
     estat bootstrap, percentile
+    di as text "Failed replications (no convergence): " e(N_misreps) " of " e(N_reps)
     foreach k of local blocks {
         med_post "`run'" "via M`k'" c`k' s`k' pp`k' rel`k'
     }

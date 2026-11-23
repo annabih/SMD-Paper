@@ -16,9 +16,10 @@
 ***   Reported: logit scale, share of the total gap (%), probability scale in pp (KHB-APE; block pp apportioned by the logit
 ***   shares) and in % of the predicted NEP rate; standard errors from the official khb command (Part G, delta method)
 *** Parts: A setup | B mediators by group | C paths a and b | D ladder (gap after adding blocks) | E KHB main (M1, M2, M4)
-***        | F KHB robustness (+ M3) | G standard errors with the official khb command | H export
+***        | F KHB robustness (+ M3) | G standard errors with the official khb command
+***        | G2 item-level decomposition: same model for each of the 13 SMSD items (which items does each mediator explain?) | H export
 *** Health is a confounder (Figure 1). Set global HEALTH_ROLE to "M" to treat health as mediator block M5 instead.
-*** Input: SILC_All_Years_Adjusted.dta | Output: Mediation_log.txt, sheets Med_paths, Med_ladder, Med_KHB in 05_Deprivation_Results.xlsx
+*** Input: SILC_All_Years_Adjusted.dta | Output: Mediation_log.txt, sheets Med_paths, Med_ladder, Med_KHB, Med_items in 05_Deprivation_Results.xlsx
 *** Requires: khb (installed automatically from SSC if missing)
 *******************************************************************************************************************************************************************************************
 
@@ -35,6 +36,7 @@ svyset hh_cl [pw=dwt], vce(linearized)
 
 * Settings
 global HEALTH_ROLE "X"
+global YVAR "smd"
 capture which khb
 if _rc != 0 ssc install khb
 
@@ -169,6 +171,8 @@ tempfile f_paths f_lad f_dec
 postfile med_paths str6 block str40 mediator str80 label double(a a_se b b_se ab) using `f_paths', replace
 postfile med_lad str8 model str45 label double(s_nep s_iwp pp pp_se rel rel_se n) using `f_lad', replace
 postfile med_dec str6 run str12 component double(logit share pp rel) using `f_dec', replace
+tempfile f_items
+postfile med_items byte ord str16 item str60 label double(p_nep tot_pp tot_rel tot_p ind_pp ind_rel ind_share ind_p dir_pp dir_rel dir_p s1 pp1 s2 pp2 s3 pp3 s4 pp4 s5 pp5) using `f_items', replace
 
 *******************************************************************************************************************************************************************************************
 *** PART B: Mediators by group (weighted means / shares)
@@ -234,7 +238,7 @@ if "$HEALTH_ROLE" == "M" {
 *** PART E / F: KHB decomposition - main (M1, M2, M4) and robustness (+ M3)
 *******************************************************************************************************************************************************************************************
 
-* One decomposition (point estimates); uses globals BLOCKS, XFV, MD1-MD5
+* One decomposition (point estimates); uses globals YVAR (outcome), BLOCKS, XFV, MD1-MD5
 capture program drop med_khb
 program define med_khb, rclass
     tempname bm
@@ -243,7 +247,7 @@ program define med_khb, rclass
         local allm "`allm' ${MD`k'}"
     }
     * full model: direct effect c' and b-paths
-    quietly logit smd i.smd_grp $XFV `allm' [pw=dwt] if s_med == 1
+    quietly logit $YVAR i.smd_grp $XFV `allm' [pw=dwt] if s_med == 1
     local bdir = _b[1.smd_grp]
     local j = 0
     foreach z of local allm {
@@ -271,7 +275,7 @@ program define med_khb, rclass
         }
     }
     * reduced model with residualised mediators: total effect c on the same scale
-    quietly logit smd i.smd_grp $XFV `rlist' [pw=dwt] if s_med == 1
+    quietly logit $YVAR i.smd_grp $XFV `rlist' [pw=dwt] if s_med == 1
     local btot = _b[1.smd_grp]
     quietly margins, dydx(smd_grp)
     matrix `bm' = r(b)
@@ -345,6 +349,60 @@ foreach run in MAIN ROB {
 }
 
 *******************************************************************************************************************************************************************************************
+*** PART G2: Item-level decomposition - the main model (blocks M1, M2, M4) for each of the 13 SMSD items
+***   Which items does the gap consist of, and which items does each mediator explain? E.g. if the transfer share mainly
+***   explains items that need reserves (unexpected expenses, holiday, furniture), this points to missing savings;
+***   if it explains basic needs (meal, warm home, arrears), rather to low or irregular payments.
+***   Point estimates as in Part E; p-values of the total (Reduced), direct (Full) and indirect (Diff) effect from khb
+***   (logit scale), Holm-adjusted across the 13 items for the indirect effect at export. The full khb output per item
+***   (incl. standard errors of each mediator) is in the log. Shares are unstable for items with a small total gap.
+*******************************************************************************************************************************************************************************************
+
+global MM_MAIN ""
+foreach k of global BLOCKS_MAIN {
+    global MM_MAIN "$MM_MAIN ${MD`k'}"
+}
+global BLOCKS "$BLOCKS_MAIN"
+local items "smi_unexpected smi_holiday smi_furniture smi_car smi_arrears smi_meal smi_warm smi_leisure smi_pocket smi_clothes smi_social smi_internet smi_shoes"
+local ord = 0
+foreach y of local items {
+    local ord = `ord' + 1
+    global YVAR "`y'"
+    quietly med_khb
+    local p0 = 100 * r(atot) / r(rtot)
+    local tot_pp = r(atot)
+    local tot_rel = r(rtot)
+    local ind_pp = r(aind)
+    local ind_rel = r(rind)
+    local ind_share = r(sind)
+    local dir_pp = r(adir)
+    local dir_rel = r(rdir)
+    forvalues k = 1/5 {
+        local s`k' = .
+        local pp`k' = .
+    }
+    foreach k of global BLOCKS {
+        local s`k' = r(s`k')
+        local pp`k' = r(pp`k')
+    }
+    local lab : variable label `y'
+    di _n(2) as result "=================== Item: `y' (`lab') ==================="
+    local tot_p = .
+    local ind_p = .
+    local dir_p = .
+    capture noisily khb logit `y' smd_grp || $MM_MAIN if s_med == 1 [pw=dwt], concomitant($XD) vce(cluster hh_cl) disentangle
+    if _rc == 0 {
+        capture local tot_p = 2 * normal(-abs(_b[smd_grp:Reduced] / _se[smd_grp:Reduced]))
+        capture local dir_p = 2 * normal(-abs(_b[smd_grp:Full] / _se[smd_grp:Full]))
+        capture local ind_p = 2 * normal(-abs(_b[smd_grp:Diff] / _se[smd_grp:Diff]))
+    }
+    post med_items (`ord') ("`y'") ("`lab'") (`p0') (`tot_pp') (`tot_rel') (`tot_p') (`ind_pp') (`ind_rel') (`ind_share') (`ind_p') (`dir_pp') (`dir_rel') (`dir_p') (`s1') (`pp1') (`s2') (`pp2') (`s3') (`pp3') (`s4') (`pp4') (`s5') (`pp5')
+    di as text "NEP rate " %5.1f `p0' " % | total " %6.2f `tot_pp' " pp (" %6.1f `tot_rel' " %, p=" %5.3f `tot_p' ") | indirect " %6.2f `ind_pp' " pp (" %5.1f `ind_share' " % of gap, p=" %5.3f `ind_p' ") | direct " %6.2f `dir_pp' " pp (" %6.1f `dir_rel' " %, p=" %5.3f `dir_p' ")"
+    di as text "  via M1 " %5.1f `s1' " % (" %5.2f `pp1' " pp) | via M2 " %5.1f `s2' " % (" %5.2f `pp2' " pp) | via M4 " %5.1f `s4' " % (" %5.2f `pp4' " pp)"
+}
+global YVAR "smd"
+
+*******************************************************************************************************************************************************************************************
 *** PART H: Export
 *******************************************************************************************************************************************************************************************
 
@@ -369,6 +427,23 @@ format share rel %6.1f
 format pp %6.2f
 list, noobs abbreviate(10) separator(0)
 export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("Med_KHB", replace) firstrow(variables)
+
+postclose med_items
+use `f_items', clear
+* Holm adjustment of the indirect-effect p-values across the items
+quietly count if !missing(ind_p)
+local m = r(N)
+gsort ind_p
+gen int rank = _n if !missing(ind_p)
+gen double ind_p_holm = min(1, (`m' - rank + 1) * ind_p) if !missing(ind_p)
+replace ind_p_holm = max(ind_p_holm, ind_p_holm[_n - 1]) if _n > 1 & !missing(ind_p_holm)
+drop rank
+sort ord
+format p_nep tot_pp ind_pp dir_pp pp1 pp2 pp3 pp4 pp5 %6.2f
+format tot_rel ind_rel dir_rel ind_share s1 s2 s3 s4 s5 %6.1f
+format tot_p ind_p ind_p_holm dir_p %6.4f
+list item p_nep tot_pp tot_rel ind_share ind_pp ind_p_holm dir_pp dir_rel s1 s2 s4, noobs abbreviate(10) separator(0)
+export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("Med_items", replace) firstrow(variables)
 
 di as result "=== FERTIG ==="
 log close

@@ -57,6 +57,55 @@ foreach v in HY020 HY022 HH021 HY090G HY040G PH020 {
     }
 }
 
+* 13 SMSD items (for Part G2): the Prepair script drops its item variables after building smd, so they are rebuilt here
+* exactly as there / in the deprivation script (1 = lacking because cannot afford)
+foreach v in HS011 HS021 HS031 HS040 HS050 HS060 HH050 HS110 HD080 PD020 PD030 PD050 PD060 PD070 PD080 {
+    capture confirm variable `v'
+    if _rc != 0 {
+        di as error "`v' not in the dataset"
+        gen double `v' = .
+    }
+    capture confirm string variable `v'
+    if _rc == 0 {
+        replace `v' = subinstr(`v', ",", ".", .)
+        destring `v', replace force
+    }
+}
+capture drop dep_unexpected dep_holiday dep_meal dep_warm dep_car dep_furniture dep_arrears dep_clothes dep_shoes dep_social dep_leisure dep_pocket dep_internet
+gen byte dep_unexpected = (HS060 == 2) if inlist(HS060, 1, 2)
+gen byte dep_holiday = (HS040 == 2) if inlist(HS040, 1, 2)
+gen byte dep_meal = (HS050 == 2) if inlist(HS050, 1, 2)
+gen byte dep_warm = (HH050 == 2) if inlist(HH050, 1, 2)
+gen byte dep_car = (HS110 == 2) if inlist(HS110, 1, 2, 3)
+gen byte dep_furniture = (HD080 == 2) if inlist(HD080, 1, 2, 3)
+gen byte dep_arrears = (inlist(HS011, 1, 2) | inlist(HS021, 1, 2) | inlist(HS031, 1, 2)) if !missing(HS011) | !missing(HS021) | !missing(HS031)
+gen byte dep_clothes = (PD020 == 2) if inlist(PD020, 1, 2, 3)
+gen byte dep_shoes = (PD030 == 2) if inlist(PD030, 1, 2, 3)
+gen byte dep_social = (PD050 == 2) if inlist(PD050, 1, 2, 3)
+gen byte dep_leisure = (PD060 == 2) if inlist(PD060, 1, 2, 3)
+gen byte dep_pocket = (PD070 == 2) if inlist(PD070, 1, 2, 3)
+gen byte dep_internet = (PD080 == 2) if inlist(PD080, 1, 2, 3)
+label variable dep_unexpected "Cannot face unexpected expenses (HS060)"
+label variable dep_holiday "Cannot afford one week holiday (HS040)"
+label variable dep_arrears "Arrears: rent/mortgage, utilities or loans"
+label variable dep_meal "Cannot afford meal with meat/fish every 2nd day (HS050)"
+label variable dep_warm "Cannot keep home adequately warm (HH050)"
+label variable dep_car "Cannot afford a car (HS110)"
+label variable dep_furniture "Cannot replace worn-out furniture (HD080)"
+label variable dep_clothes "Cannot replace worn-out clothes (PD020)"
+label variable dep_shoes "Cannot afford two pairs of shoes (PD030)"
+label variable dep_social "Cannot meet friends/family monthly (PD050)"
+label variable dep_leisure "Cannot regularly take part in leisure activity (PD060)"
+label variable dep_pocket "Cannot spend small amount on oneself (PD070)"
+label variable dep_internet "Cannot afford internet at home (PD080)"
+* check: the rebuilt items must reproduce smd (agreement should be 100 %)
+capture drop dep_n dep_valid dep_smd
+egen dep_n = rowtotal(dep_unexpected dep_holiday dep_meal dep_warm dep_car dep_furniture dep_arrears dep_clothes dep_shoes dep_social dep_leisure dep_pocket dep_internet)
+egen dep_valid = rownonmiss(dep_unexpected dep_holiday dep_meal dep_warm dep_car dep_furniture dep_arrears dep_clothes dep_shoes dep_social dep_leisure dep_pocket dep_internet)
+gen byte dep_smd = (dep_n >= 7) if dep_valid == 13
+di _n as result "--- Check: items rebuilt here vs. smd ---"
+tab dep_smd smd if !missing(smd_grp), missing
+
 * X: chronic illness (PH020: 1 yes, 2 no), missing = 99 (as in the ladder)
 capture drop x_PH020
 gen int x_PH020 = PH020
@@ -363,7 +412,7 @@ foreach k of global BLOCKS_MAIN {
     global MM_MAIN "$MM_MAIN ${MD`k'}"
 }
 global BLOCKS "$BLOCKS_MAIN"
-local items "smi_unexpected smi_holiday smi_furniture smi_car smi_arrears smi_meal smi_warm smi_leisure smi_pocket smi_clothes smi_social smi_internet smi_shoes"
+local items "dep_unexpected dep_holiday dep_furniture dep_car dep_arrears dep_meal dep_warm dep_leisure dep_pocket dep_clothes dep_social dep_internet dep_shoes"
 local ord = 0
 foreach y of local items {
     local ord = `ord' + 1

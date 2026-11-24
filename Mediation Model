@@ -3,22 +3,32 @@
 *** Treatment W: smd_grp (1 = IWP Employees, 0 = AROP w/o IWP), outcome Y: smd (SMSD rebuilt from 13 items)
 *** Confounders X (in all models): year, age, sex, household type, education, region, urbanisation and health
 ***   (general health, limitation, chronic illness PH020); prior history only in the longitudinal data (not here)
-*** Mediators M:
-***   M1 current income   : income position inc_rel (% of poverty threshold); poverty gap = 100 - inc_rel, so not added separately
-***   M2 income structure : share of social transfers (other than old-age/survivor) in disposable income, (HY020 - HY022) / HY020
-***   M3 asset proxies    : tenure (HH021), capital income (HY090G > 0), rental income (HY040G > 0) - robustness only
-***   M4 household        : other persons (18-64) in the household working >= 7 months, 0 / 1 / 2+ (as x_OTHW in the ladder)
-***   Work intensity (RX040) is not used: it contains the person's own months of work, i.e. partly the treatment itself
+*** Mediators M (numbering = block number k in the code):
+***   1  M1  income level      : income position inc_rel (% of poverty threshold); poverty gap = 100 - inc_rel, not added separately
+***   2  M2a means-tested      : share of disposable income from social assistance/minimum income (HY060G) and housing allowances (HY070G)
+***   3  M2b insurance-type    : share from unemployment (PY090G), sickness (PY120G) and disability benefits (PY130G), summed over the household
+***   4  M2c family allowances : share from family/child allowances (HY050G)
+***   5  M3  asset proxies     : tenure (HH021), capital income (HY090G > 0), rental income (HY040G > 0) - robustness only
+***   6  M4  household         : other persons (18-64) in the household working >= 7 months, 0 / 1 / 2+
+***   7  M2  total transfer share (HY020 - HY022) / HY020 - only for comparison with the earlier specification
+***   8  health                : only if HEALTH_ROLE = "M"
+***   Shares are in % of disposable household income (HY020); income from work and other sources is the reference. Transfer
+***   amounts are gross (G variables), HY020 is net; most of these benefits are not taxed in Austria. Education allowances
+***   (PY140G) are not modelled separately. Work intensity (RX040) is not used: it contains the person's own months of work.
+*** Models (runs):
+***   C   main     : M1 + M2a + M2b + M2c + M4          (income structure by type of transfer)
+***   B   no M2    : M1 + M4                            (without income structure - closest to the post-transfer starting point)
+***   AGG total M2 : M1 + M2 (total share) + M4         (earlier specification)
+***   ROB assets   : M1 + M2a + M2b + M2c + M3 + M4
 *** Method: KHB decomposition (Karlson, Holm & Breen 2012), implemented by hand so that contributions can be summed per block
 ***   a_j = coefficient of W in OLS of mediator j on W + X
-***   b_j = coefficient of mediator j in the logit of Y on W + X + all M (full model); c' = coefficient of W there (direct effect)
+***   b_j = coefficient of mediator j in the logit of Y on W + X + all M of the model (full model); c' = coefficient of W there
 ***   c   = coefficient of W in the logit of Y on W + X + residualised M (total effect, same scale) = c' + sum_j a_j * b_j (exact)
 ***   Reported: logit scale, share of the total gap (%), probability scale in pp (KHB-APE; block pp apportioned by the logit
 ***   shares) and in % of the predicted NEP rate; standard errors from the official khb command (Part G, delta method)
-*** Parts: A setup | B mediators by group | C paths a and b | D ladder (gap after adding blocks) | E KHB main (M1, M2, M4)
-***        | F KHB robustness (+ M3) | G standard errors with the official khb command
-***        | G2 item-level decomposition: same model for each of the 13 SMSD items (which items does each mediator explain?) | H export
-*** Health is a confounder (Figure 1). Set global HEALTH_ROLE to "M" to treat health as mediator block M5 instead.
+*** Parts: A setup | B mediators by group | C paths a and b per model | D ladder | E KHB per model | G standard errors (khb)
+***        | G2 item-level decomposition with the main model C | H export
+*** Health is a confounder (Figure 1). Set global HEALTH_ROLE to "M" to treat health as mediator (block 8) instead.
 *** Input: SILC_All_Years_Adjusted.dta | Output: Mediation_log.txt, sheets Med_paths, Med_ladder, Med_KHB, Med_items in 05_Deprivation_Results.xlsx
 *** Requires: khb (installed automatically from SSC if missing)
 *******************************************************************************************************************************************************************************************
@@ -118,6 +128,55 @@ replace tr_share = 0 if tr_share < 0 & !missing(tr_share)
 replace tr_share = 100 if tr_share > 100 & !missing(tr_share)
 label variable tr_share "Share of social transfers in disposable income (%)"
 
+* M2a-c: shares of disposable household income by type of transfer (%)
+foreach v in HY050G HY060G HY070G {
+    capture confirm variable `v'
+    if _rc != 0 {
+        di as error "`v' not in the dataset - created as 0"
+        gen double `v' = 0
+    }
+    capture confirm string variable `v'
+    if _rc == 0 {
+        replace `v' = subinstr(`v', ",", ".", .)
+        destring `v', replace force
+    }
+}
+* personal benefits: gross version if available, otherwise net; summed over all household members
+foreach b in PY090 PY120 PY130 {
+    local pv_`b' ""
+    foreach s in G N {
+        capture confirm variable `b'`s'
+        if _rc == 0 & "`pv_`b''" == "" local pv_`b' "`b'`s'"
+    }
+    if "`pv_`b''" == "" {
+        di as error "`b'G / `b'N not in the dataset - created as 0"
+        gen double `b'G = 0
+        local pv_`b' "`b'G"
+    }
+    capture confirm string variable `pv_`b''
+    if _rc == 0 {
+        replace `pv_`b'' = subinstr(`pv_`b'', ",", ".", .)
+        destring `pv_`b'', replace force
+    }
+    di as text "`b': using `pv_`b''"
+}
+capture drop hh_unemp hh_sick hh_disab tr_meanstest tr_insur tr_family tr_sumcheck
+bysort year idhh: egen double hh_unemp = total(`pv_PY090')
+bysort year idhh: egen double hh_sick = total(`pv_PY120')
+bysort year idhh: egen double hh_disab = total(`pv_PY130')
+gen double tr_meanstest = 100 * (cond(missing(HY060G), 0, HY060G) + cond(missing(HY070G), 0, HY070G)) / HY020 if !missing(HY020) & HY020 > 0
+gen double tr_insur = 100 * (hh_unemp + hh_sick + hh_disab) / HY020 if !missing(HY020) & HY020 > 0
+gen double tr_family = 100 * cond(missing(HY050G), 0, HY050G) / HY020 if !missing(HY020) & HY020 > 0
+foreach v in tr_meanstest tr_insur tr_family {
+    replace `v' = 0 if `v' < 0 & !missing(`v')
+    replace `v' = 100 if `v' > 100 & !missing(`v')
+}
+label variable tr_meanstest "Share of means-tested benefits in disposable income (%)"
+label variable tr_insur "Share of unemployment, sickness and disability benefits (%)"
+label variable tr_family "Share of family allowances in disposable income (%)"
+* check: the three components should roughly add up to the total transfer share (difference = education allowances, gross/net)
+gen double tr_sumcheck = tr_meanstest + tr_insur + tr_family - tr_share
+
 * M3: tenure, capital income, rental income (as Part J5)
 capture drop tenure cap_inc rent_inc
 gen byte tenure = 9
@@ -140,30 +199,46 @@ capture label drop othwlbl
 label define othwlbl 0 "No other earner" 1 "One other earner" 2 "Two or more"
 label values x_OTHW othwlbl
 
-* Variable lists
+
+* Variable lists: mediator blocks (numbering as in the header) and labels
 global XSOC "i.year i.age_grp i.sex i.hh_type i.educ3 i.region i.urban"
 global XHEALTH "i.health_bad i.limit i.x_PH020"
 global M1 "c.inc_rel"
-global M2 "c.tr_share"
-global M3 "i.tenure i.cap_inc i.rent_inc"
-global M4 "i.x_OTHW"
-global BLOCKS_MAIN "1 2 4"
-global BLOCKS_ROB "1 2 3 4"
+global M2 "c.tr_meanstest"
+global M3 "c.tr_insur"
+global M4 "c.tr_family"
+global M5 "i.tenure i.cap_inc i.rent_inc"
+global M6 "i.x_OTHW"
+global M7 "c.tr_share"
+global M8 ""
+global LBL1 "M1 income level"
+global LBL2 "M2a means-tested"
+global LBL3 "M2b insurance-type"
+global LBL4 "M2c family allowances"
+global LBL5 "M3 assets"
+global LBL6 "M4 other earners"
+global LBL7 "M2 total transfers"
+global LBL8 "Health"
+global RUNS "C B AGG ROB"
+global BLOCKS_C "1 2 3 4 6"
+global BLOCKS_B "1 6"
+global BLOCKS_AGG "1 7 6"
+global BLOCKS_ROB "1 2 3 4 5 6"
 if "$HEALTH_ROLE" == "X" {
     global XFV "$XSOC $XHEALTH"
-    global M5 ""
 }
 else {
     global XFV "$XSOC"
-    global M5 "$XHEALTH"
-    global BLOCKS_MAIN "$BLOCKS_MAIN 5"
-    global BLOCKS_ROB "$BLOCKS_ROB 5"
+    global M8 "$XHEALTH"
+    foreach r of global RUNS {
+        global BLOCKS_`r' "${BLOCKS_`r'} 8"
+    }
 }
 
-* Sample: comparison groups with SMSD, income position and transfer share (all other variables have a missing category)
+* Sample: comparison groups with SMSD, income position and transfer shares (all other variables have a missing category)
 capture drop s_main s_med
 gen byte s_main = !missing(smd_grp, smd)
-gen byte s_med = (s_main == 1 & !missing(inc_rel, tr_share, x_OTHW))
+gen byte s_med = (s_main == 1 & !missing(inc_rel, tr_share, tr_meanstest, tr_insur, tr_family, x_OTHW))
 di _n as result "--- Sample: main analysis vs. mediation model ---"
 tab smd_grp s_med if s_main == 1, missing
 
@@ -189,26 +264,23 @@ program define med_expand, rclass
     return local list "`out'"
 end
 
-forvalues k = 1/5 {
+forvalues k = 1/8 {
     global MD`k' ""
     if "${M`k'}" != "" {
         med_expand ${M`k'}, prefix(_m_)
         global MD`k' "`r(list)'"
     }
-    di as text "M`k': ${MD`k'}"
+    di as text "Block `k' (${LBL`k'}): ${MD`k'}"
 }
-global ALLM "$MD1 $MD2 $MD3 $MD4 $MD5"
 
-* Observations perfectly predicted in the largest model (sparse categories, e.g. missing education / health with no
-* SMSD case) are dropped by logit model by model. Drop them once, so that all models use the
-* same sample and logit does not run into separation problems
+* Observations perfectly predicted in the largest model (sparse categories) are dropped once, so that all models use
+* the same sample (the total transfer share, block 7, is left out here: it is close to the sum of blocks 2-4)
 capture drop s_med0
 gen byte s_med0 = s_med
-quietly logit smd i.smd_grp $XFV $MD1 $MD2 $MD3 $MD4 $MD5 [pw=dwt] if s_med == 1
+quietly logit smd i.smd_grp $XFV $MD1 $MD2 $MD3 $MD4 $MD5 $MD6 $MD8 [pw=dwt] if s_med == 1
 replace s_med = 0 if s_med == 1 & !e(sample)
 di _n as result "--- Observations dropped because perfectly predicted ---"
 count if s_med0 == 1 & s_med == 0
-capture noisily tab1 educ3 region urban health_bad limit x_PH020 hh_type if s_med0 == 1 & s_med == 0
 di _n as result "--- Sparse cells: observations and SMSD cases per category (final sample) ---"
 foreach v in hh_type educ3 region urban health_bad limit x_PH020 tenure rent_inc x_OTHW {
     tab `v' smd if s_med == 1
@@ -216,36 +288,40 @@ foreach v in hh_type educ3 region urban health_bad limit x_PH020 tenure rent_inc
 tab smd_grp if s_med == 1
 
 * Result files
-tempfile f_paths f_lad f_dec
-postfile med_paths str4 run str6 block str40 mediator str80 label double(a a_se b b_se ab) using `f_paths', replace
-postfile med_lad str8 model str45 label double(s_nep s_iwp pp pp_se rel rel_se n) using `f_lad', replace
-postfile med_dec str6 run str12 component double(logit share pp rel) using `f_dec', replace
-tempfile f_items
-postfile med_items byte ord str16 item str60 label double(p_nep tot_pp tot_rel tot_p ind_pp ind_rel ind_share ind_p dir_pp dir_rel dir_p s1 pp1 s2 pp2 s3 pp3 s4 pp4 s5 pp5) using `f_items', replace
+tempfile f_paths f_lad f_dec f_items
+postfile med_paths str4 run str24 block str40 mediator str80 label double(a a_se b b_se ab) using `f_paths', replace
+postfile med_lad str8 model str50 label double(s_nep s_iwp pp pp_se rel rel_se n) using `f_lad', replace
+postfile med_dec str4 run str28 component double(logit share pp rel) using `f_dec', replace
+postfile med_items byte ord str16 item str60 label double(p_nep tot_pp tot_rel tot_p ind_pp ind_rel ind_share ind_p dir_pp dir_rel dir_p s1 pp1 s2 pp2 s3 pp3 s4 pp4 s5 pp5 s6 pp6 s7 pp7 s8 pp8) using `f_items', replace
 
 *******************************************************************************************************************************************************************************************
 *** PART B: Mediators by group (weighted means / shares)
 *******************************************************************************************************************************************************************************************
 
-di _n as result "--- Mediators by group ---"
-table smd_grp if s_med == 1 [aw=dwt], statistic(mean inc_rel tr_share cap_inc rent_inc) nformat(%9.3f mean)
+di _n as result "--- Mediators by group (transfer shares in % of disposable household income) ---"
+table smd_grp if s_med == 1 [aw=dwt], statistic(mean inc_rel tr_share tr_meanstest tr_insur tr_family tr_sumcheck) nformat(%9.2f mean)
+di _n as result "--- Share of persons receiving each type of transfer, capital and rental income ---"
+capture drop rec_meanstest rec_insur rec_family
+gen byte rec_meanstest = (tr_meanstest > 0) if !missing(tr_meanstest)
+gen byte rec_insur = (tr_insur > 0) if !missing(tr_insur)
+gen byte rec_family = (tr_family > 0) if !missing(tr_family)
+table smd_grp if s_med == 1 [aw=dwt], statistic(mean rec_meanstest rec_insur rec_family cap_inc rent_inc) nformat(%9.3f mean)
 svy, subpop(s_med): tabulate tenure smd_grp, column percent
 svy, subpop(s_med): tabulate x_OTHW smd_grp, column percent
 
 *******************************************************************************************************************************************************************************************
-*** PART C: Paths a (W -> M, OLS, adjusted for X) and b (M -> Y, full logit with the mediators of the respective model); a * b = contribution (logit)
+*** PART C: Paths a (W -> M, OLS, adjusted for X) and b (M -> Y, full logit with the mediators of the respective model)
+***   a * b = contribution (logit scale), identical to the khb "Components of Difference" of that model
 *******************************************************************************************************************************************************************************************
 
-* Paths for the main model (M1, M2, M4) and the robustness model (+ M3) separately: b depends on which mediators are
-* in the full model, so each set of b-paths matches its own decomposition in Part E / F (a * b = khb "Components")
-foreach run in MAIN ROB {
+foreach run of global RUNS {
     local mm ""
     foreach k of global BLOCKS_`run' {
         local mm "`mm' ${MD`k'}"
     }
     quietly svy, subpop(s_med): logit smd i.smd_grp $XFV `mm'
     estimates store med_full_`run'
-    di _n as result "--- Paths a and b, `run' model (blocks ${BLOCKS_`run'}) ---"
+    di _n as result "--- Paths a and b, model `run' (blocks ${BLOCKS_`run'}) ---"
     foreach k of global BLOCKS_`run' {
         foreach z of global MD`k' {
             quietly estimates restore med_full_`run'
@@ -255,8 +331,8 @@ foreach run in MAIN ROB {
             local a = _b[1.smd_grp]
             local a_se = _se[1.smd_grp]
             local lab : variable label `z'
-            post med_paths ("`run'") ("M`k'") ("`z'") ("`lab'") (`a') (`a_se') (`b') (`b_se') (`a' * `b')
-            di as text "M`k' " %-24s "`z'" " a = " %8.4f `a' " (" %6.4f `a_se' ")  b = " %8.4f `b' " (" %6.4f `b_se' ")  a*b = " %8.4f `a' * `b'
+            post med_paths ("`run'") ("${LBL`k'}") ("`z'") ("`lab'") (`a') (`a_se') (`b') (`b_se') (`a' * `b')
+            di as text %-22s "${LBL`k'}" %-18s " `z'" " a = " %8.4f `a' " (" %6.4f `a_se' ")  b = " %8.4f `b' " (" %6.4f `b_se' ")  a*b = " %8.4f `a' * `b'
         }
     }
 }
@@ -275,27 +351,29 @@ program define med_row
     local s0 = 100 * _b[0bn.smd_grp]
     quietly nlcom (pp: 100 * (_b[1.smd_grp] - _b[0bn.smd_grp])) (rel: 100 * (_b[1.smd_grp] / _b[0bn.smd_grp] - 1)), post
     post med_lad ("`model'") ("`label'") (`s0') (`s1') (_b[pp]) (_se[pp]) (_b[rel]) (_se[rel]) (`n')
-    di as text %-8s "`model'" %-40s " `label'" " NEP " %5.2f `s0' " IWP " %5.2f `s1' " " %6.2f _b[pp] " pp (" %4.2f _se[pp] ") " %6.1f _b[rel] " % (" %4.1f _se[rel] ") N=" `n'
+    di as text %-6s "`model'" %-46s " `label'" " NEP " %5.2f `s0' " IWP " %5.2f `s1' " " %6.2f _b[pp] " pp (" %4.2f _se[pp] ") " %6.1f _b[rel] " % (" %4.1f _se[rel] ") N=" `n'
 end
 
 di _n as result "--- Ladder ---"
 med_row "X" "X only (total gap)" ""
-med_row "M1" "X + M1 current income" "$MD1"
-med_row "M2" "X + M2 income structure" "$MD2"
-med_row "M3" "X + M3 asset proxies" "$MD3"
-med_row "M4" "X + M4 household" "$MD4"
-med_row "M124" "X + M1, M2, M4 (main)" "$MD1 $MD2 $MD4"
-med_row "M1234" "X + M1-M4 (robustness)" "$MD1 $MD2 $MD3 $MD4"
-if "$HEALTH_ROLE" == "M" {
-    med_row "M5" "X + M5 health" "$MD5"
-    med_row "M1245" "X + M1, M2, M4, M5" "$MD1 $MD2 $MD4 $MD5"
-}
+med_row "M1" "X + M1 income level" "$MD1"
+med_row "M2a" "X + M2a means-tested" "$MD2"
+med_row "M2b" "X + M2b insurance-type" "$MD3"
+med_row "M2c" "X + M2c family allowances" "$MD4"
+med_row "M2abc" "X + M2a-c (all transfer types)" "$MD2 $MD3 $MD4"
+med_row "M2tot" "X + M2 total transfer share" "$MD7"
+med_row "M3" "X + M3 assets" "$MD5"
+med_row "M4" "X + M4 other earners" "$MD6"
+med_row "B" "B: X + M1 + M4 (no income structure)" "$MD1 $MD6"
+med_row "C" "C: X + M1 + M2a-c + M4 (main)" "$MD1 $MD2 $MD3 $MD4 $MD6"
+med_row "AGG" "AGG: X + M1 + M2 total + M4" "$MD1 $MD7 $MD6"
+med_row "ROB" "ROB: X + M1 + M2a-c + M3 + M4" "$MD1 $MD2 $MD3 $MD4 $MD5 $MD6"
 
 *******************************************************************************************************************************************************************************************
-*** PART E / F: KHB decomposition - main (M1, M2, M4) and robustness (+ M3)
+*** PART E: KHB decomposition per model (point estimates; standard errors from khb in Part G)
 *******************************************************************************************************************************************************************************************
 
-* One decomposition (point estimates); uses globals YVAR (outcome), BLOCKS, XFV, MD1-MD5
+* One decomposition; uses globals YVAR (outcome), BLOCKS, XFV, MD1-MD8
 capture program drop med_khb
 program define med_khb, rclass
     tempname bm
@@ -365,27 +443,28 @@ program define med_khb, rclass
     return scalar check = `bind' - `csum'
 end
 
-* Table of one decomposition (point estimates; identical to the official khb command in Part G, which gives the SEs)
+* Table of one decomposition (point estimates; identical to the official khb command in Part G)
 capture program drop med_table
 program define med_table
     args run blocks
     global BLOCKS "`blocks'"
     med_khb
-    di _n as result "=== KHB `run': blocks `blocks' ===" _n as text "check (c - c' - sum a*b, should be ~0): " %12.10f r(check)
+    di _n as result "=== KHB model `run': blocks `blocks' ===" _n as text "check (c - c' - sum a*b, should be ~0): " %12.10f r(check)
     foreach k of local blocks {
-        post med_dec ("`run'") ("via M`k'") (r(c`k')) (r(s`k')) (r(pp`k')) (r(rel`k'))
-        di as text %-12s "via M`k'" " logit " %7.3f r(c`k') "  share of gap " %6.1f r(s`k') " %  " %6.2f r(pp`k') " pp  " %6.1f r(rel`k') " % of NEP"
+        post med_dec ("`run'") ("via ${LBL`k'}") (r(c`k')) (r(s`k')) (r(pp`k')) (r(rel`k'))
+        di as text %-26s "via ${LBL`k'}" " logit " %7.3f r(c`k') "  share of gap " %6.1f r(s`k') " %  " %6.2f r(pp`k') " pp  " %6.1f r(rel`k') " % of NEP"
     }
     post med_dec ("`run'") ("indirect") (r(bind)) (r(sind)) (r(aind)) (r(rind))
     post med_dec ("`run'") ("direct c'") (r(bdir)) (r(sdir)) (r(adir)) (r(rdir))
     post med_dec ("`run'") ("total c") (r(btot)) (100) (r(atot)) (r(rtot))
-    di as text %-12s "indirect" " logit " %7.3f r(bind) "  share of gap " %6.1f r(sind) " %  " %6.2f r(aind) " pp  " %6.1f r(rind) " % of NEP"
-    di as text %-12s "direct c'" " logit " %7.3f r(bdir) "  share of gap " %6.1f r(sdir) " %  " %6.2f r(adir) " pp  " %6.1f r(rdir) " % of NEP"
-    di as text %-12s "total c" " logit " %7.3f r(btot) "  share of gap " %6.1f 100 " %  " %6.2f r(atot) " pp  " %6.1f r(rtot) " % of NEP"
+    di as text %-26s "indirect" " logit " %7.3f r(bind) "  share of gap " %6.1f r(sind) " %  " %6.2f r(aind) " pp  " %6.1f r(rind) " % of NEP"
+    di as text %-26s "direct c'" " logit " %7.3f r(bdir) "  share of gap " %6.1f r(sdir) " %  " %6.2f r(adir) " pp  " %6.1f r(rdir) " % of NEP"
+    di as text %-26s "total c" " logit " %7.3f r(btot) "  share of gap " %6.1f 100 " %  " %6.2f r(atot) " pp  " %6.1f r(rtot) " % of NEP"
 end
 
-med_table "main" "$BLOCKS_MAIN"
-med_table "rob_M3" "$BLOCKS_ROB"
+foreach run of global RUNS {
+    med_table "`run'" "${BLOCKS_`run'}"
+}
 
 *******************************************************************************************************************************************************************************************
 *** PART G: Standard errors with the official khb command (delta method): total c (Reduced), direct c' (Full), indirect (Diff),
@@ -394,32 +473,31 @@ med_table "rob_M3" "$BLOCKS_ROB"
 
 med_expand $XFV, prefix(_x_)
 global XD "`r(list)'"
-foreach run in MAIN ROB {
+foreach run of global RUNS {
     global MM ""
     foreach k of global BLOCKS_`run' {
         global MM "$MM ${MD`k'}"
     }
-    di _n as result "=== khb `run' (blocks ${BLOCKS_`run'}): logit scale, contribution of each mediator ==="
+    di _n as result "=== khb model `run' (blocks ${BLOCKS_`run'}): logit scale, contribution of each mediator ==="
     capture noisily khb logit smd smd_grp || $MM if s_med == 1 [pw=dwt], concomitant($XD) vce(cluster hh_cl) summary disentangle
-    di _n as result "=== khb `run' (blocks ${BLOCKS_`run'}): probability scale (APE) ==="
+    di _n as result "=== khb model `run' (blocks ${BLOCKS_`run'}): probability scale (APE) ==="
     capture noisily khb logit smd smd_grp || $MM if s_med == 1 [pw=dwt], concomitant($XD) vce(cluster hh_cl) ape
 }
 
 *******************************************************************************************************************************************************************************************
-*** PART G2: Item-level decomposition - the main model (blocks M1, M2, M4) for each of the 13 SMSD items
-***   Which items does the gap consist of, and which items does each mediator explain? E.g. if the transfer share mainly
-***   explains items that need reserves (unexpected expenses, holiday, furniture), this points to missing savings;
-***   if it explains basic needs (meal, warm home, arrears), rather to low or irregular payments.
-***   Point estimates as in Part E; p-values of the total (Reduced), direct (Full) and indirect (Diff) effect from khb
-***   (logit scale), Holm-adjusted across the 13 items for the indirect effect at export. The full khb output per item
-***   (incl. standard errors of each mediator) is in the log. Shares are unstable for items with a small total gap.
+*** PART G2: Item-level decomposition - the main model C for each of the 13 SMSD items
+***   Which items does the gap consist of, and which type of transfer explains which items? E.g. if means-tested benefits
+***   mainly explain items that need reserves (unexpected expenses, holiday, furniture), this points to asset tests / missing
+***   savings; if they explain arrears or basic needs, rather to low or irregular payments.
+***   p-values of the total (Reduced), direct (Full) and indirect (Diff) effect from khb (logit scale), Holm-adjusted across
+***   the 13 items for the indirect effect at export. Shares are unstable for items with a small total gap.
 *******************************************************************************************************************************************************************************************
 
-global MM_MAIN ""
-foreach k of global BLOCKS_MAIN {
-    global MM_MAIN "$MM_MAIN ${MD`k'}"
+global MM_C ""
+foreach k of global BLOCKS_C {
+    global MM_C "$MM_C ${MD`k'}"
 }
-global BLOCKS "$BLOCKS_MAIN"
+global BLOCKS "$BLOCKS_C"
 local items "dep_unexpected dep_holiday dep_furniture dep_car dep_arrears dep_meal dep_warm dep_leisure dep_pocket dep_clothes dep_social dep_internet dep_shoes"
 local ord = 0
 foreach y of local items {
@@ -434,28 +512,32 @@ foreach y of local items {
     local ind_share = r(sind)
     local dir_pp = r(adir)
     local dir_rel = r(rdir)
-    forvalues k = 1/5 {
+    forvalues k = 1/8 {
         local s`k' = .
         local pp`k' = .
     }
+    local vialine ""
     foreach k of global BLOCKS {
         local s`k' = r(s`k')
         local pp`k' = r(pp`k')
+        local sf : display %5.1f `s`k''
+        local pf : display %5.2f `pp`k''
+        local vialine "`vialine' | ${LBL`k'} `sf' % (`pf' pp)"
     }
     local lab : variable label `y'
     di _n(2) as result "=================== Item: `y' (`lab') ==================="
     local tot_p = .
     local ind_p = .
     local dir_p = .
-    capture noisily khb logit `y' smd_grp || $MM_MAIN if s_med == 1 [pw=dwt], concomitant($XD) vce(cluster hh_cl) disentangle
+    capture noisily khb logit `y' smd_grp || $MM_C if s_med == 1 [pw=dwt], concomitant($XD) vce(cluster hh_cl) disentangle
     if _rc == 0 {
         capture local tot_p = 2 * normal(-abs(_b[smd_grp:Reduced] / _se[smd_grp:Reduced]))
         capture local dir_p = 2 * normal(-abs(_b[smd_grp:Full] / _se[smd_grp:Full]))
         capture local ind_p = 2 * normal(-abs(_b[smd_grp:Diff] / _se[smd_grp:Diff]))
     }
-    post med_items (`ord') ("`y'") ("`lab'") (`p0') (`tot_pp') (`tot_rel') (`tot_p') (`ind_pp') (`ind_rel') (`ind_share') (`ind_p') (`dir_pp') (`dir_rel') (`dir_p') (`s1') (`pp1') (`s2') (`pp2') (`s3') (`pp3') (`s4') (`pp4') (`s5') (`pp5')
+    post med_items (`ord') ("`y'") ("`lab'") (`p0') (`tot_pp') (`tot_rel') (`tot_p') (`ind_pp') (`ind_rel') (`ind_share') (`ind_p') (`dir_pp') (`dir_rel') (`dir_p') (`s1') (`pp1') (`s2') (`pp2') (`s3') (`pp3') (`s4') (`pp4') (`s5') (`pp5') (`s6') (`pp6') (`s7') (`pp7') (`s8') (`pp8')
     di as text "NEP rate " %5.1f `p0' " % | total " %6.2f `tot_pp' " pp (" %6.1f `tot_rel' " %, p=" %5.3f `tot_p' ") | indirect " %6.2f `ind_pp' " pp (" %5.1f `ind_share' " % of gap, p=" %5.3f `ind_p' ") | direct " %6.2f `dir_pp' " pp (" %6.1f `dir_rel' " %, p=" %5.3f `dir_p' ")"
-    di as text "  via M1 " %5.1f `s1' " % (" %5.2f `pp1' " pp) | via M2 " %5.1f `s2' " % (" %5.2f `pp2' " pp) | via M4 " %5.1f `s4' " % (" %5.2f `pp4' " pp)"
+    di as text " `vialine'"
 }
 global YVAR "smd"
 
@@ -466,10 +548,11 @@ global YVAR "smd"
 postclose med_paths
 postclose med_lad
 postclose med_dec
+postclose med_items
 
 use `f_paths', clear
 format a a_se b b_se ab %9.4f
-list, noobs abbreviate(10) separator(0)
+list run block mediator a a_se b b_se ab, noobs abbreviate(10) separator(0)
 export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("Med_paths", replace) firstrow(variables)
 
 use `f_lad', clear
@@ -485,7 +568,6 @@ format pp %6.2f
 list, noobs abbreviate(10) separator(0)
 export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("Med_KHB", replace) firstrow(variables)
 
-postclose med_items
 use `f_items', clear
 * Holm adjustment of the indirect-effect p-values across the items
 quietly count if !missing(ind_p)
@@ -496,10 +578,10 @@ gen double ind_p_holm = min(1, (`m' - rank + 1) * ind_p) if !missing(ind_p)
 replace ind_p_holm = max(ind_p_holm, ind_p_holm[_n - 1]) if _n > 1 & !missing(ind_p_holm)
 drop rank
 sort ord
-format p_nep tot_pp ind_pp dir_pp pp1 pp2 pp3 pp4 pp5 %6.2f
-format tot_rel ind_rel dir_rel ind_share s1 s2 s3 s4 s5 %6.1f
+format p_nep tot_pp ind_pp dir_pp pp1 pp2 pp3 pp4 pp5 pp6 pp7 pp8 %6.2f
+format tot_rel ind_rel dir_rel ind_share s1 s2 s3 s4 s5 s6 s7 s8 %6.1f
 format tot_p ind_p ind_p_holm dir_p %6.4f
-list item p_nep tot_pp tot_rel ind_share ind_pp ind_p_holm dir_pp dir_rel s1 s2 s4, noobs abbreviate(10) separator(0)
+list item p_nep tot_pp tot_rel ind_share ind_pp ind_p_holm dir_pp dir_rel s1 s2 s3 s4 s6, noobs abbreviate(10) separator(0)
 export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("Med_items", replace) firstrow(variables)
 
 di as result "=== FERTIG ==="

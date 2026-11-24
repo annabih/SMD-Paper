@@ -3,23 +3,22 @@
 *** Treatment W: smd_grp (1 = IWP Employees, 0 = AROP w/o IWP), outcome Y: smd (SMSD rebuilt from 13 items)
 *** Confounders X (in all models): year, age, sex, household type, education, region, urbanisation and health
 ***   (general health, limitation, chronic illness PH020); prior history only in the longitudinal data (not here)
-*** Mediators M (numbering = block number k in the code):
-***   1  M1  income level      : income position inc_rel (% of poverty threshold); poverty gap = 100 - inc_rel, not added separately
-***   2  M2a means-tested      : share of disposable income from social assistance/minimum income (HY060G) and housing allowances (HY070G)
-***   3  M2b insurance-type    : share from unemployment (PY090G), sickness (PY120G) and disability benefits (PY130G), summed over the household
-***   4  M2c family allowances : share from family/child allowances (HY050G)
-***   5  M3  asset proxies     : tenure (HH021), capital income (HY090G > 0), rental income (HY040G > 0) - robustness only
-***   6  M4  household         : other persons (18-64) in the household working >= 7 months, 0 / 1 / 2+
-***   7  M2  total transfer share (HY020 - HY022) / HY020 - only for comparison with the earlier specification
-***   8  health                : only if HEALTH_ROLE = "M"
-***   Shares are in % of disposable household income (HY020); income from work and other sources is the reference. Transfer
-***   amounts are gross (G variables), HY020 is net; most of these benefits are not taxed in Austria. Education allowances
-***   (PY140G) are not modelled separately. Work intensity (RX040) is not used: it contains the person's own months of work.
+*** Mediators M (numbering = block number k in the code); only variables collected in every year 2018-2024 are used:
+***   1  M1  income level        : income position inc_rel (% of poverty threshold); poverty gap = 100 - inc_rel, not added separately
+***   2  M2  housing cost burden : annual housing costs (12 * HH070) net of housing allowances (HY070G) in % of disposable income
+***                                net of housing allowances (Eurostat definition); together with M1 this separates the income
+***                                level from what is left after housing costs
+***   3  M3  asset proxies       : tenure (HH021), capital income (HY090G > 0), rental income (HY040G > 0) - robustness only
+***   4  M4  household           : other persons (18-64) in the household working >= 7 months, 0 / 1 / 2+
+***   8  health                  : only if HEALTH_ROLE = "M"
+***   Not used as mediators: the income structure by type of transfer (shares of HY050G-HY070G, PY090G-PY130G). At a given
+***   income level it mirrors the share of income from work and hence employment itself; it is reported descriptively in Part B.
+***   Work intensity (RX040) is not used either: it contains the person's own months of work.
+***   Checked descriptively only (Part B): private transfers from other households (HY080G), non-cash employee income (PY020G).
 *** Models (runs):
-***   C   main     : M1 + M2a + M2b + M2c + M4          (income structure by type of transfer)
-***   B   no M2    : M1 + M4                            (without income structure - closest to the post-transfer starting point)
-***   AGG total M2 : M1 + M2 (total share) + M4         (earlier specification)
-***   ROB assets   : M1 + M2a + M2b + M2c + M3 + M4
+***   MAIN main     : M1 + M2 + M4
+***   B    no M2    : M1 + M4                            (income level only, as in the earlier model B)
+***   ROB  assets   : M1 + M2 + M3 + M4
 *** Method: KHB decomposition (Karlson, Holm & Breen 2012), implemented by hand so that contributions can be summed per block
 ***   a_j = coefficient of W in OLS of mediator j on W + X
 ***   b_j = coefficient of mediator j in the logit of Y on W + X + all M of the model (full model); c' = coefficient of W there
@@ -27,7 +26,7 @@
 ***   Reported: logit scale, share of the total gap (%), probability scale in pp (KHB-APE; block pp apportioned by the logit
 ***   shares) and in % of the predicted NEP rate; standard errors from the official khb command (Part G, delta method)
 *** Parts: A setup | B mediators by group | C paths a and b per model | D ladder | E KHB per model | G standard errors (khb)
-***        | G2 item-level decomposition with the main model C | H export
+***        | G2 item-level decomposition with the main model MAIN | H export
 *** Health is a confounder (Figure 1). Set global HEALTH_ROLE to "M" to treat health as mediator (block 8) instead.
 *** Input: SILC_All_Years_Adjusted.dta | Output: Mediation_log.txt, sheets Med_paths, Med_ladder, Med_KHB, Med_items in 05_Deprivation_Results.xlsx
 *** Requires: khb (installed automatically from SSC if missing)
@@ -54,7 +53,7 @@ if _rc != 0 ssc install khb
 *** PART A: Setup - raw variables, mediators, sample
 *******************************************************************************************************************************************************************************************
 
-foreach v in HY020 HY022 HH021 HY090G HY040G PH020 {
+foreach v in HY020 HY022 HH021 HY090G HY040G PH020 HH070 HY080G PY020G {
     capture confirm variable `v'
     if _rc != 0 {
         di as error "`v' not in the dataset - add it in the merge script"
@@ -121,14 +120,14 @@ capture drop x_PH020
 gen int x_PH020 = PH020
 replace x_PH020 = 99 if missing(x_PH020)
 
-* M2: share of social transfers in disposable household income (%)
+* Descriptive only (Part B): share of social transfers in disposable household income (%), total and by type of transfer
 capture drop tr_share
 gen double tr_share = 100 * (HY020 - HY022) / HY020 if !missing(HY020, HY022) & HY020 > 0
 replace tr_share = 0 if tr_share < 0 & !missing(tr_share)
 replace tr_share = 100 if tr_share > 100 & !missing(tr_share)
 label variable tr_share "Share of social transfers in disposable income (%)"
 
-* M2a-c: shares of disposable household income by type of transfer (%)
+* shares of disposable household income by type of transfer (%)
 foreach v in HY050G HY060G HY070G {
     capture confirm variable `v'
     if _rc != 0 {
@@ -177,6 +176,32 @@ label variable tr_family "Share of family allowances in disposable income (%)"
 * check: the three components should roughly add up to the total transfer share (difference = education allowances, gross/net)
 gen double tr_sumcheck = tr_meanstest + tr_insur + tr_family - tr_share
 
+* M2: housing cost burden (Eurostat definition of the housing cost overburden rate): annual housing costs net of housing
+* allowances in % of disposable household income net of housing allowances. HH070 = total monthly housing costs (rent or
+* mortgage interest, utilities, regular maintenance, insurance), HY070G = housing allowances (annual). Capped at 0 and 100.
+capture drop hc_share hc_over
+gen double hc_share = 100 * (12 * HH070 - cond(missing(HY070G), 0, HY070G)) / (HY020 - cond(missing(HY070G), 0, HY070G)) if !missing(HH070, HY020) & HY020 - cond(missing(HY070G), 0, HY070G) > 0
+replace hc_share = 0 if hc_share < 0 & !missing(hc_share)
+replace hc_share = 100 if hc_share > 100 & !missing(hc_share)
+gen byte hc_over = (hc_share > 40) if !missing(hc_share)
+label variable hc_share "Housing cost burden (% of disposable income, net of housing allowances)"
+label variable hc_over "Housing cost overburden (> 40 %)"
+* check: HH070 must be available in every year (otherwise those years drop out of the mediation sample)
+di _n as result "--- Check: housing cost burden available per year (comparison groups) ---"
+capture drop hc_avail
+gen byte hc_avail = !missing(hc_share)
+tab year hc_avail if !missing(smd_grp, smd), row
+
+* Descriptive checks of two further candidates available in all years (Part B, not mediators)
+capture drop rec_private sh_private rec_noncash
+gen byte rec_private = (HY080G > 0) if !missing(HY080G)
+gen double sh_private = 100 * HY080G / HY020 if !missing(HY080G, HY020) & HY020 > 0
+replace sh_private = 100 if sh_private > 100 & !missing(sh_private)
+gen byte rec_noncash = (PY020G > 0) if !missing(PY020G)
+label variable rec_private "Receives regular transfers from other households (HY080G > 0)"
+label variable sh_private "Share of transfers from other households in disposable income (%)"
+label variable rec_noncash "Receives non-cash employee income (PY020G > 0, person)"
+
 * M3: tenure, capital income, rental income (as Part J5)
 capture drop tenure cap_inc rent_inc
 gen byte tenure = 9
@@ -204,26 +229,25 @@ label values x_OTHW othwlbl
 global XSOC "i.year i.age_grp i.sex i.hh_type i.educ3 i.region i.urban"
 global XHEALTH "i.health_bad i.limit i.x_PH020"
 global M1 "c.inc_rel"
-global M2 "c.tr_meanstest"
-global M3 "c.tr_insur"
-global M4 "c.tr_family"
-global M5 "i.tenure i.cap_inc i.rent_inc"
-global M6 "i.x_OTHW"
-global M7 "c.tr_share"
+global M2 "c.hc_share"
+global M3 "i.tenure i.cap_inc i.rent_inc"
+global M4 "i.x_OTHW"
+global M5 ""
+global M6 ""
+global M7 ""
 global M8 ""
 global LBL1 "M1 income level"
-global LBL2 "M2a means-tested"
-global LBL3 "M2b insurance-type"
-global LBL4 "M2c family allowances"
-global LBL5 "M3 assets"
-global LBL6 "M4 other earners"
-global LBL7 "M2 total transfers"
+global LBL2 "M2 housing cost burden"
+global LBL3 "M3 assets"
+global LBL4 "M4 other earners"
+global LBL5 ""
+global LBL6 ""
+global LBL7 ""
 global LBL8 "Health"
-global RUNS "C B AGG ROB"
-global BLOCKS_C "1 2 3 4 6"
-global BLOCKS_B "1 6"
-global BLOCKS_AGG "1 7 6"
-global BLOCKS_ROB "1 2 3 4 5 6"
+global RUNS "MAIN B ROB"
+global BLOCKS_MAIN "1 2 4"
+global BLOCKS_B "1 4"
+global BLOCKS_ROB "1 2 3 4"
 if "$HEALTH_ROLE" == "X" {
     global XFV "$XSOC $XHEALTH"
 }
@@ -235,10 +259,10 @@ else {
     }
 }
 
-* Sample: comparison groups with SMSD, income position and transfer shares (all other variables have a missing category)
+* Sample: comparison groups with SMSD, income position and housing cost burden (all other variables have a missing category)
 capture drop s_main s_med
 gen byte s_main = !missing(smd_grp, smd)
-gen byte s_med = (s_main == 1 & !missing(inc_rel, tr_share, tr_meanstest, tr_insur, tr_family, x_OTHW))
+gen byte s_med = (s_main == 1 & !missing(inc_rel, hc_share, x_OTHW))
 di _n as result "--- Sample: main analysis vs. mediation model ---"
 tab smd_grp s_med if s_main == 1, missing
 
@@ -274,10 +298,10 @@ forvalues k = 1/8 {
 }
 
 * Observations perfectly predicted in the largest model (sparse categories) are dropped once, so that all models use
-* the same sample (the total transfer share, block 7, is left out here: it is close to the sum of blocks 2-4)
+* the same sample
 capture drop s_med0
 gen byte s_med0 = s_med
-quietly logit smd i.smd_grp $XFV $MD1 $MD2 $MD3 $MD4 $MD5 $MD6 $MD8 [pw=dwt] if s_med == 1
+quietly logit smd i.smd_grp $XFV $MD1 $MD2 $MD3 $MD4 $MD8 [pw=dwt] if s_med == 1
 replace s_med = 0 if s_med == 1 & !e(sample)
 di _n as result "--- Observations dropped because perfectly predicted ---"
 count if s_med0 == 1 & s_med == 0
@@ -298,16 +322,20 @@ postfile med_items byte ord str16 item str60 label double(p_nep tot_pp tot_rel t
 *** PART B: Mediators by group (weighted means / shares)
 *******************************************************************************************************************************************************************************************
 
-di _n as result "--- Mediators by group (transfer shares in % of disposable household income) ---"
-table smd_grp if s_med == 1 [aw=dwt], statistic(mean inc_rel tr_share tr_meanstest tr_insur tr_family tr_sumcheck) nformat(%9.2f mean)
-di _n as result "--- Share of persons receiving each type of transfer, capital and rental income ---"
+di _n as result "--- Mediators by group: income position (% of poverty threshold), housing cost burden (%), overburden (> 40 %) ---"
+table smd_grp if s_med == 1 [aw=dwt], statistic(mean inc_rel hc_share hc_over) nformat(%9.2f mean)
+svy, subpop(s_med): tabulate tenure smd_grp, column percent
+svy, subpop(s_med): tabulate x_OTHW smd_grp, column percent
+di _n as result "--- Descriptive only (not a mediator): income structure by type of transfer, % of disposable household income ---"
+table smd_grp if s_med == 1 [aw=dwt], statistic(mean tr_share tr_meanstest tr_insur tr_family tr_sumcheck) nformat(%9.2f mean)
 capture drop rec_meanstest rec_insur rec_family
 gen byte rec_meanstest = (tr_meanstest > 0) if !missing(tr_meanstest)
 gen byte rec_insur = (tr_insur > 0) if !missing(tr_insur)
 gen byte rec_family = (tr_family > 0) if !missing(tr_family)
+di _n as result "--- Share of persons receiving each type of transfer, capital and rental income ---"
 table smd_grp if s_med == 1 [aw=dwt], statistic(mean rec_meanstest rec_insur rec_family cap_inc rent_inc) nformat(%9.3f mean)
-svy, subpop(s_med): tabulate tenure smd_grp, column percent
-svy, subpop(s_med): tabulate x_OTHW smd_grp, column percent
+di _n as result "--- Further candidates (all years), descriptive check: transfers from other households, non-cash employee income ---"
+table smd_grp if s_med == 1 [aw=dwt], statistic(mean rec_private sh_private rec_noncash) nformat(%9.3f mean)
 
 *******************************************************************************************************************************************************************************************
 *** PART C: Paths a (W -> M, OLS, adjusted for X) and b (M -> Y, full logit with the mediators of the respective model)
@@ -357,17 +385,13 @@ end
 di _n as result "--- Ladder ---"
 med_row "X" "X only (total gap)" ""
 med_row "M1" "X + M1 income level" "$MD1"
-med_row "M2a" "X + M2a means-tested" "$MD2"
-med_row "M2b" "X + M2b insurance-type" "$MD3"
-med_row "M2c" "X + M2c family allowances" "$MD4"
-med_row "M2abc" "X + M2a-c (all transfer types)" "$MD2 $MD3 $MD4"
-med_row "M2tot" "X + M2 total transfer share" "$MD7"
-med_row "M3" "X + M3 assets" "$MD5"
-med_row "M4" "X + M4 other earners" "$MD6"
-med_row "B" "B: X + M1 + M4 (no income structure)" "$MD1 $MD6"
-med_row "C" "C: X + M1 + M2a-c + M4 (main)" "$MD1 $MD2 $MD3 $MD4 $MD6"
-med_row "AGG" "AGG: X + M1 + M2 total + M4" "$MD1 $MD7 $MD6"
-med_row "ROB" "ROB: X + M1 + M2a-c + M3 + M4" "$MD1 $MD2 $MD3 $MD4 $MD5 $MD6"
+med_row "M2" "X + M2 housing cost burden" "$MD2"
+med_row "M12" "X + M1 + M2 (income after housing costs)" "$MD1 $MD2"
+med_row "M3" "X + M3 assets" "$MD3"
+med_row "M4" "X + M4 other earners" "$MD4"
+med_row "B" "B: X + M1 + M4" "$MD1 $MD4"
+med_row "MAIN" "MAIN: X + M1 + M2 + M4 (main)" "$MD1 $MD2 $MD4"
+med_row "ROB" "ROB: X + M1 + M2 + M3 + M4" "$MD1 $MD2 $MD3 $MD4"
 
 *******************************************************************************************************************************************************************************************
 *** PART E: KHB decomposition per model (point estimates; standard errors from khb in Part G)
@@ -485,19 +509,19 @@ foreach run of global RUNS {
 }
 
 *******************************************************************************************************************************************************************************************
-*** PART G2: Item-level decomposition - the main model C for each of the 13 SMSD items
-***   Which items does the gap consist of, and which type of transfer explains which items? E.g. if means-tested benefits
-***   mainly explain items that need reserves (unexpected expenses, holiday, furniture), this points to asset tests / missing
-***   savings; if they explain arrears or basic needs, rather to low or irregular payments.
+*** PART G2: Item-level decomposition - the main model MAIN for each of the 13 SMSD items
+***   Which items does the gap consist of, and which part is explained by the income level and the housing cost burden?
+***   Housing costs should matter most for arrears and keeping the home warm; a large remaining direct effect for reserve
+***   and participation items (unexpected expenses, holiday, leisure, pocket money) is not explained by these monetary channels.
 ***   p-values of the total (Reduced), direct (Full) and indirect (Diff) effect from khb (logit scale), Holm-adjusted across
 ***   the 13 items for the indirect effect at export. Shares are unstable for items with a small total gap.
 *******************************************************************************************************************************************************************************************
 
 global MM_C ""
-foreach k of global BLOCKS_C {
+foreach k of global BLOCKS_MAIN {
     global MM_C "$MM_C ${MD`k'}"
 }
-global BLOCKS "$BLOCKS_C"
+global BLOCKS "$BLOCKS_MAIN"
 local items "dep_unexpected dep_holiday dep_furniture dep_car dep_arrears dep_meal dep_warm dep_leisure dep_pocket dep_clothes dep_social dep_internet dep_shoes"
 local ord = 0
 foreach y of local items {
@@ -581,7 +605,7 @@ sort ord
 format p_nep tot_pp ind_pp dir_pp pp1 pp2 pp3 pp4 pp5 pp6 pp7 pp8 %6.2f
 format tot_rel ind_rel dir_rel ind_share s1 s2 s3 s4 s5 s6 s7 s8 %6.1f
 format tot_p ind_p ind_p_holm dir_p %6.4f
-list item p_nep tot_pp tot_rel ind_share ind_pp ind_p_holm dir_pp dir_rel s1 s2 s3 s4 s6, noobs abbreviate(10) separator(0)
+list item p_nep tot_pp tot_rel ind_share ind_pp ind_p_holm dir_pp dir_rel s1 pp1 s2 pp2 s4 pp4, noobs abbreviate(10) separator(0)
 export excel using "/Users/anna/Library/Mobile Documents/com~apple~CloudDocs/1. Oxford/EU-SILC/05_Deprivation_Results.xlsx", sheet("Med_items", replace) firstrow(variables)
 
 di as result "=== FERTIG ==="
